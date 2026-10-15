@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#172b25">
+    <meta name="description" content="ブラウザーで遊べる、オリジナルのブロック建築ゲーム。">
+    <title>Moneycraft — ブロックの世界</title>
+    <link rel="stylesheet" href="./style.css">
+    <script src="./game.js" defer></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="Moneycraft ホーム">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <span>moneycraft</span>
+        </a>
+        <div class="topbar-note"><span class="status-dot"></span> ひとりで遊ぶワールド</div>
+      </header>
+
+      <section class="intro" aria-labelledby="game-title">
+        <p class="eyebrow">BUILD A LITTLE WORLD</p>
+        <h1 id="game-title">ブロックの世界へようこそ</h1>
+        <p class="intro-copy">一人称の世界を歩き回って、ブロックで自由に建築しよう。</p>
+      </section>
+
+      <section class="game-card" aria-label="ブロック建築ゲーム">
+        <div class="game-toolbar">
+          <div class="world-label">
+            <span class="sun-icon" aria-hidden="true">☀</span>
+            <span>ひだまりの丘 · 3Dワールド</span>
+          </div>
+          <button class="reset-button" id="reset-world" type="button">ワールドをリセット</button>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="game" width="960" height="540" aria-label="一人称視点の3Dブロックワールド。WASDキーで移動し、マウスで視点を動かします。">
+            このゲームを遊ぶには、WebGLに対応したブラウザーが必要です。
+          </canvas>
+          <div class="crosshair" aria-hidden="true"><span></span></div>
+          <output class="debug-indicator" id="debug-indicator" aria-live="polite" hidden></output>
+          <div class="canvas-hint" id="game-message" aria-live="polite">ゲーム画面をクリックしてスタート</div>
+          <div class="virtual-stick" id="virtual-stick" aria-hidden="true" hidden><span></span></div>
+          <div class="touch-controls" aria-label="タッチ操作">
+            <button class="touch-button touch-mine" id="touch-mine" type="button" aria-label="ブロックを掘る">掘る</button>
+            <button class="touch-button touch-place" id="touch-place" type="button" aria-label="ブロックを置く">置く</button>
+            <button class="touch-button touch-jump" id="touch-jump" type="button" aria-label="ジャンプ">ジャンプ</button>
+          </div>
+        </div>
+        <div class="game-footer">
+          <div class="hotbar" id="hotbar" role="toolbar" aria-label="ブロック選択"></div>
+          <span class="save-state" id="save-state">このブラウザーに自動保存</span>
+        </div>
+      </section>
+
+      <section class="help-grid" aria-label="操作方法">
+        <article class="help-item">
+          <span class="help-icon" aria-hidden="true">⌨</span>
+          <div><h2>歩いて見回す</h2><p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> で移動。マウスで見回し、<kbd>Space</kbd> でジャンプ。タッチ端末は画面左をドラッグして移動、右をドラッグして見回します。</p></div>
+        </article>
+        <article class="help-item">
+          <span class="help-icon pickaxe" aria-hidden="true">⛏</span>
+          <div><h2>掘る・置く</h2><p>照準をブロックに合わせて左クリックで掘る。右クリックでブロックを置く。タッチ端末は画面の「掘る」「置く」ボタンを使います。</p></div>
+        </article>
+        <article class="help-item">
+          <span class="help-icon" aria-hidden="true">▦</span>
+          <div><h2>ブロックを選ぶ</h2><p>下のスロットをクリック、または <kbd>1</kbd>〜<kbd>5</kbd> キー。<kbd>I</kbd> で座標表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
+        </article>
+      </section>
+      <p class="local-note">ワールドの保存データはこの端末のブラウザー内に保存されます。ほかの人とは共有されません。</p>
+      <footer class="site-footer">小さなブロックから、自分だけの世界をつくろう。</footer>
+    </main>
+  </body>
+</html>
