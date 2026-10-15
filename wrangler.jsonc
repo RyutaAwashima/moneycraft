@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "moneycraft-realtime",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-03",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROOMS",
+        "class_name": "Room"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Room"]
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGINS": "http://localhost:49179,http://127.0.0.1:49179,https://ryutaawashima.github.io"
+  }
+}

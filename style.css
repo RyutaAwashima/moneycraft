@@ -99,6 +99,189 @@ h1 {
   letter-spacing: -1.4px;
 }
 
+.multiplayer-panel {
+  margin: 0 0 16px;
+  padding: 18px 20px;
+  border: 1px solid #dfe6dc;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 7px 20px rgba(44, 68, 52, 0.05);
+}
+
+.multiplayer-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.multiplayer-heading .eyebrow {
+  margin-bottom: 4px;
+}
+
+.multiplayer-heading h2 {
+  margin: 0;
+  color: #294236;
+  font-size: 16px;
+}
+
+.multiplayer-capacity {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #edf4eb;
+  color: #52745a;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.room-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.room-code-label {
+  margin-left: auto;
+  color: #718078;
+  font-size: 11px;
+}
+
+.room-code-input {
+  width: 116px;
+  min-height: 37px;
+  padding: 0 10px;
+  border: 1px solid #dce4da;
+  border-radius: 7px;
+  background: #fff;
+  color: #304538;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.room-code-input:focus {
+  border-color: #77a482;
+  outline: 3px solid #e4f0e3;
+}
+
+.room-button {
+  min-height: 37px;
+  padding: 0 13px;
+  border: 1px solid #dce4da;
+  border-radius: 7px;
+  background: #fff;
+  color: #52645a;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.room-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.room-create {
+  border-color: #315f4b;
+  background: #315f4b;
+  color: #fff;
+}
+
+.room-create:hover {
+  background: #264f3d;
+}
+
+.room-join:hover,
+.room-leave:hover {
+  border-color: #9ab69b;
+  background: #f3f7f0;
+}
+
+.room-status {
+  margin-top: 10px;
+  color: #77847b;
+  font-size: 11px;
+}
+
+.multiplayer-note {
+  margin: 6px 0 0;
+  color: #9aa39b;
+  font-size: 10px;
+}
+
+.room-details {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.75fr) minmax(200px, 1.4fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid #edf0eb;
+}
+
+.room-share,
+.room-roster {
+  display: grid;
+  gap: 5px;
+}
+
+.room-share > span,
+.roster-heading,
+.room-owner-note {
+  color: #839087;
+  font-size: 10px;
+}
+
+.room-share strong {
+  color: #315f4b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 20px;
+  letter-spacing: 3px;
+}
+
+.roster-count {
+  color: #4b6854;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#room-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#room-roster li {
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #f0f4ed;
+  color: #516357;
+  font-size: 10px;
+}
+
+.room-management {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.room-close {
+  border-color: #ecd8d2;
+  color: #9a5445;
+}
+
+.room-close:hover {
+  background: #fff5f2;
+}
+
 .intro-copy {
   margin: 9px 0 0;
   color: #758178;
@@ -165,6 +348,30 @@ h1 {
   aspect-ratio: 16 / 9;
   cursor: pointer;
   touch-action: none;
+}
+
+.remote-player-labels {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.remote-player-label {
+  position: absolute;
+  max-width: 150px;
+  overflow: hidden;
+  padding: 3px 7px;
+  transform: translate(-50%, -100%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 6px;
+  background: rgba(30, 43, 37, 0.86);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .crosshair {
@@ -483,6 +690,46 @@ kbd {
 
   .intro-copy {
     font-size: 12px;
+  }
+
+  .multiplayer-panel {
+    padding: 14px;
+  }
+
+  .multiplayer-heading h2 {
+    font-size: 14px;
+  }
+
+  .room-actions {
+    flex-wrap: wrap;
+  }
+
+  .room-create {
+    flex: 1 1 auto;
+  }
+
+  .room-code-label {
+    margin-left: 0;
+  }
+
+  .room-code-input {
+    flex: 1 1 90px;
+    width: auto;
+  }
+
+  .room-details {
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+  }
+
+  .room-roster {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .room-management {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .help-grid {

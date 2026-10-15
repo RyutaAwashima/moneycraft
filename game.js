@@ -12,6 +12,7 @@
   const touchJump = document.querySelector("#touch-jump");
   const saveState = document.querySelector("#save-state");
   const resetButton = document.querySelector("#reset-world");
+  const remotePlayerLabels = document.querySelector("#remote-player-labels");
   if (!gl) {
     message.textContent = "このブラウザーではWebGLを利用できません";
     saveState.textContent = "WebGL対応ブラウザーが必要です";
@@ -24,6 +25,8 @@
   const SAVE_KEY = "moneycraft-3d-world-v2";
   const PLAYER_HEIGHT = 1.7;
   const PLAYER_RADIUS = 0.28;
+  const PLAYER_STATE_INTERVAL_MS = 100;
+  const REMOTE_PLAYER_TIMEOUT = 5000;
   const REACH = 6;
   const GRAVITY = 19;
   const JUMP_SPEED = 7.8;
@@ -34,6 +37,11 @@
     { id: 4, name: "木材ブロック", color: [0.65, 0.43, 0.23] },
     { id: 5, name: "葉っぱブロック", color: [0.25, 0.53, 0.29] },
   ];
+  const worldModel = globalThis.MoneycraftWorld.createModel({
+    width: WORLD_WIDTH,
+    depth: WORLD_DEPTH,
+    height: WORLD_HEIGHT,
+  });
   const keys = new Set();
   const touchPointers = new Map();
   const touchMove = { x: 0, z: 0 };
@@ -45,33 +53,40 @@
     { normal: [0, 0, 1], neighbor: [0, 0, 1], light: 0.9, corners: [[1, 0, 1], [1, 1, 1], [0, 1, 1], [0, 0, 1]] },
     { normal: [0, 0, -1], neighbor: [0, 0, -1], light: 0.68, corners: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]] },
   ];
+  const avatarFaces = [
+    [0, 1, 2, 0, 2, 3], [4, 7, 6, 4, 6, 5],
+    [0, 4, 5, 0, 5, 1], [3, 2, 6, 3, 6, 7],
+    [1, 5, 6, 1, 6, 2], [0, 3, 7, 0, 7, 4],
+  ];
 
-  let world = new Uint8Array(WORLD_WIDTH * WORLD_DEPTH * WORLD_HEIGHT);
   let player = { x: 20.5, y: 0, z: 29.5, velocityY: 0, grounded: false, yaw: 0, pitch: -0.12 };
+  const remotePlayers = new Map();
+  const remotePlayerLabelElements = new Map();
   let selectedBlock = 1;
   let program;
   let positionBuffer;
   let colorBuffer;
+  let avatarPositionBuffer;
+  let avatarColorBuffer;
+  let positionAttribute;
+  let colorAttribute;
   let vertexCount = 0;
   let lastTime = 0;
   let saveTimer = 0;
   let debugTimer = 0;
+  let remoteRenderTime = 0;
   let pointerLockPending = false;
 
-  function indexOf(x, y, z) {
-    return (y * WORLD_DEPTH + z) * WORLD_WIDTH + x;
-  }
-
   function inBounds(x, y, z) {
-    return x >= 0 && x < WORLD_WIDTH && z >= 0 && z < WORLD_DEPTH && y >= 0 && y < WORLD_HEIGHT;
+    return worldModel.inBounds(x, y, z);
   }
 
   function getBlock(x, y, z) {
-    return inBounds(x, y, z) ? world[indexOf(x, y, z)] : 0;
+    return worldModel.getBlock(x, y, z);
   }
 
   function setBlock(x, y, z, block) {
-    if (inBounds(x, y, z)) world[indexOf(x, y, z)] = block;
+    return worldModel.setBlock(x, y, z, block);
   }
 
   function compileShader(type, source) {
@@ -121,59 +136,15 @@
     gl.useProgram(program);
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
-    gl.enableVertexAttribArray(gl.getAttribLocation(program, "aPosition"));
-    gl.enableVertexAttribArray(gl.getAttribLocation(program, "aColor"));
-  }
-
-  function terrainHeight(x, z) {
-    return Math.floor(
-      5
-      + Math.sin(x * 0.31) * 1.2
-      + Math.sin(z * 0.27) * 1.25
-      + Math.sin((x + z) * 0.17) * 0.75
-      + Math.sin((x - z) * 0.11) * 0.55,
-    );
-  }
-
-  function createWorld() {
-    world = new Uint8Array(WORLD_WIDTH * WORLD_DEPTH * WORLD_HEIGHT);
-    const heights = Array.from({ length: WORLD_DEPTH }, () => Array(WORLD_WIDTH).fill(0));
-    for (let z = 0; z < WORLD_DEPTH; z += 1) {
-      for (let x = 0; x < WORLD_WIDTH; x += 1) {
-        const surface = terrainHeight(x, z);
-        heights[z][x] = surface;
-        for (let y = 0; y <= surface; y += 1) {
-          setBlock(x, y, z, y === surface ? 1 : y >= surface - 3 ? 2 : 3);
-        }
-      }
+    positionAttribute = gl.getAttribLocation(program, "aPosition");
+    colorAttribute = gl.getAttribLocation(program, "aColor");
+    gl.enableVertexAttribArray(positionAttribute);
+    gl.enableVertexAttribArray(colorAttribute);
+    avatarPositionBuffer = gl.createBuffer();
+    avatarColorBuffer = gl.createBuffer();
+    if (!avatarPositionBuffer || !avatarColorBuffer) {
+      throw new Error("Could not create multiplayer avatar buffers.");
     }
-
-    for (let z = 3; z < WORLD_DEPTH - 3; z += 1) {
-      for (let x = 3; x < WORLD_WIDTH - 3; x += 1) {
-        if ((x * 17 + z * 31) % 43 !== 0) continue;
-        const ground = heights[z][x];
-        const trunkHeight = 3 + ((x + z) % 2);
-        for (let dy = 1; dy <= trunkHeight; dy += 1) setBlock(x, ground + dy, z, 4);
-        const crownY = ground + trunkHeight;
-        for (let dy = -1; dy <= 2; dy += 1) {
-          for (let dz = -2; dz <= 2; dz += 1) {
-            for (let dx = -2; dx <= 2; dx += 1) {
-              if (Math.abs(dx) + Math.abs(dz) + Math.max(0, dy - 1) > 4) continue;
-              if (getBlock(x + dx, crownY + dy, z + dz) === 0) setBlock(x + dx, crownY + dy, z + dz, 5);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  function findSurface(x, z) {
-    const cellX = Math.max(0, Math.min(WORLD_WIDTH - 1, Math.floor(x)));
-    const cellZ = Math.max(0, Math.min(WORLD_DEPTH - 1, Math.floor(z)));
-    for (let y = WORLD_HEIGHT - 1; y >= 0; y -= 1) {
-      if (getBlock(cellX, y, cellZ) !== 0) return y + 1;
-    }
-    return 1;
   }
 
   function moveToSafeSpawn() {
@@ -185,7 +156,7 @@
     }
     candidates.sort((a, b) => a.distance - b.distance);
     for (const candidate of candidates) {
-      const y = findSurface(candidate.x, candidate.z);
+      const y = worldModel.findSurface(candidate.x, candidate.z);
       if (collidesAt(candidate.x, y, candidate.z)) continue;
       player.x = candidate.x;
       player.y = y;
@@ -202,13 +173,10 @@
       const saved = localStorage.getItem(SAVE_KEY);
       if (saved) {
         const data = JSON.parse(saved);
-        if (data.world instanceof Array && data.world.length === world.length
-          && data.world.every((block) => Number.isInteger(block) && block >= 0 && block <= 5)
-          && Number.isFinite(data.x) && Number.isFinite(data.z)) {
-          world.set(data.world);
+        if (Number.isFinite(data.x) && Number.isFinite(data.z) && worldModel.load(data.world)) {
           player.x = Math.max(1, Math.min(WORLD_WIDTH - 1, data.x));
           player.z = Math.max(1, Math.min(WORLD_DEPTH - 1, data.z));
-          player.y = findSurface(player.x, player.z);
+          player.y = worldModel.findSurface(player.x, player.z);
           if (Number.isFinite(data.yaw)) player.yaw = data.yaw;
           if (!collidesAt(player.x, player.y, player.z)) return;
         }
@@ -222,7 +190,7 @@
   function saveGame() {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        world: Array.from(world),
+        world: worldModel.serialize(),
         x: player.x,
         z: player.z,
         yaw: player.yaw,
@@ -237,9 +205,10 @@
   function rebuildWorldMesh() {
     const positions = [];
     const colors = [];
-    for (let y = 0; y < WORLD_HEIGHT; y += 1) {
-      for (let z = 0; z < WORLD_DEPTH; z += 1) {
-        for (let x = 0; x < WORLD_WIDTH; x += 1) {
+    const { width, depth, height } = worldModel.dimensions;
+    for (let y = 0; y < height; y += 1) {
+      for (let z = 0; z < depth; z += 1) {
+        for (let x = 0; x < width; x += 1) {
           const block = getBlock(x, y, z);
           if (block === 0) continue;
           for (const face of faces) {
@@ -370,7 +339,202 @@
       lookAt(eye, viewDirection()),
     );
     gl.uniformMatrix4fv(gl.getUniformLocation(program, "uViewProjection"), false, viewProjection);
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+    gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+    renderRemotePlayers(viewProjection);
+  }
+
+  function isRemotePlayerState(state) {
+    return state !== null
+      && typeof state === "object"
+      && Number.isFinite(state.x) && state.x >= 0 && state.x <= WORLD_WIDTH
+      && Number.isFinite(state.y) && state.y >= 0 && state.y <= WORLD_HEIGHT + 10
+      && Number.isFinite(state.z) && state.z >= 0 && state.z <= WORLD_DEPTH
+      && Number.isFinite(state.yaw)
+      && Number.isFinite(state.pitch) && state.pitch >= -1.5 && state.pitch <= 1.5;
+  }
+
+  function getRemotePlayerLabel(id) {
+    let label = remotePlayerLabelElements.get(id);
+    if (!label) {
+      label = document.createElement("span");
+      label.className = "remote-player-label";
+      label.hidden = true;
+      remotePlayerLabels.append(label);
+      remotePlayerLabelElements.set(id, label);
+    }
+    return label;
+  }
+
+  function addOrUpdateRemotePlayer(playerInfo) {
+    if (!playerInfo || typeof playerInfo.id !== "string" || typeof playerInfo.displayName !== "string") return;
+    let remote = remotePlayers.get(playerInfo.id);
+    if (!remote) {
+      remote = {
+        id: playerInfo.id,
+        displayName: playerInfo.displayName,
+        state: null,
+        target: null,
+        lastStateAt: 0,
+      };
+      remotePlayers.set(playerInfo.id, remote);
+    } else {
+      remote.displayName = playerInfo.displayName;
+    }
+    const label = getRemotePlayerLabel(playerInfo.id);
+    label.textContent = playerInfo.displayName;
+    label.hidden = !remote.state;
+    if (!isRemotePlayerState(playerInfo.state)) return;
+    if (!remote.state) remote.state = { ...playerInfo.state };
+    remote.target = { ...playerInfo.state };
+    remote.lastStateAt = performance.now();
+  }
+
+  function removeRemotePlayer(id) {
+    remotePlayers.delete(id);
+    const label = remotePlayerLabelElements.get(id);
+    if (label) label.remove();
+    remotePlayerLabelElements.delete(id);
+  }
+
+  function clearRemotePlayers() {
+    for (const id of remotePlayers.keys()) removeRemotePlayer(id);
+  }
+
+  function receiveRoomJoined(event) {
+    const room = event.detail;
+    if (!room || typeof room.player?.id !== "string" || !Array.isArray(room.players)) return;
+    clearRemotePlayers();
+    for (const otherPlayer of room.players) {
+      if (otherPlayer.id !== room.player.id) addOrUpdateRemotePlayer(otherPlayer);
+    }
+  }
+
+  function receivePlayerJoined(event) {
+    const remote = event.detail;
+    if (remote?.id) addOrUpdateRemotePlayer(remote);
+  }
+
+  function receivePlayerState(event) {
+    const update = event.detail;
+    if (!update || typeof update.playerId !== "string" || !isRemotePlayerState(update.state)) return;
+    let remote = remotePlayers.get(update.playerId);
+    if (!remote && typeof update.displayName === "string") {
+      addOrUpdateRemotePlayer({
+        id: update.playerId,
+        displayName: update.displayName,
+        state: update.state,
+      });
+      remote = remotePlayers.get(update.playerId);
+    }
+    if (!remote) return;
+    remote.target = { ...update.state };
+    remote.lastStateAt = performance.now();
+    getRemotePlayerLabel(remote.id).hidden = false;
+    if (!remote.state) remote.state = { ...update.state };
+  }
+
+  function projectToCanvas(viewProjection, x, y, z) {
+    const clipX = viewProjection[0] * x + viewProjection[4] * y + viewProjection[8] * z + viewProjection[12];
+    const clipY = viewProjection[1] * x + viewProjection[5] * y + viewProjection[9] * z + viewProjection[13];
+    const clipW = viewProjection[3] * x + viewProjection[7] * y + viewProjection[11] * z + viewProjection[15];
+    if (clipW <= 0) return null;
+    const normalizedX = clipX / clipW;
+    const normalizedY = clipY / clipW;
+    if (Math.abs(normalizedX) > 1.1 || Math.abs(normalizedY) > 1.2) return null;
+    return {
+      x: (normalizedX + 1) * 0.5 * canvas.clientWidth,
+      y: (1 - normalizedY) * 0.5 * canvas.clientHeight,
+    };
+  }
+
+  function remotePlayerColor(id) {
+    let hash = 2166136261;
+    for (let index = 0; index < id.length; index += 1) {
+      hash = Math.imul(hash ^ id.charCodeAt(index), 16777619);
+    }
+    return [
+      0.36 + ((hash >>> 16) & 0xff) / 510,
+      0.36 + ((hash >>> 8) & 0xff) / 510,
+      0.36 + (hash & 0xff) / 510,
+    ];
+  }
+
+  function appendAvatarBox(positions, colors, remote, center, halfSize, color) {
+    const corners = [
+      [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+      [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+    ];
+    const cosYaw = Math.cos(remote.state.yaw);
+    const sinYaw = Math.sin(remote.state.yaw);
+    const transformed = corners.map(([x, y, z]) => {
+      const localX = x * halfSize[0];
+      const localZ = z * halfSize[2];
+      return [
+        remote.state.x + center[0] + localX * cosYaw + localZ * sinYaw,
+        remote.state.y + center[1] + y * halfSize[1],
+        remote.state.z + center[2] - localX * sinYaw + localZ * cosYaw,
+      ];
+    });
+    for (const face of avatarFaces) {
+      for (const index of face) {
+        positions.push(...transformed[index]);
+        colors.push(...color);
+      }
+    }
+  }
+
+  function renderRemotePlayers(viewProjection) {
+    const positions = [];
+    const colors = [];
+    const now = performance.now();
+    const interpolation = 1 - Math.exp(-12 * Math.min(1 / 30, (now - (remoteRenderTime || now)) / 1000));
+    remoteRenderTime = now;
+
+    for (const remote of remotePlayers.values()) {
+      if (!remote.lastStateAt || now - remote.lastStateAt > REMOTE_PLAYER_TIMEOUT) {
+        removeRemotePlayer(remote.id);
+        continue;
+      }
+      if (!remote.state || !remote.target) continue;
+      const yawDelta = Math.atan2(
+        Math.sin(remote.target.yaw - remote.state.yaw),
+        Math.cos(remote.target.yaw - remote.state.yaw),
+      );
+      remote.state.x += (remote.target.x - remote.state.x) * interpolation;
+      remote.state.y += (remote.target.y - remote.state.y) * interpolation;
+      remote.state.z += (remote.target.z - remote.state.z) * interpolation;
+      remote.state.yaw += yawDelta * interpolation;
+      remote.state.pitch += (remote.target.pitch - remote.state.pitch) * interpolation;
+
+      const color = remotePlayerColor(remote.id);
+      appendAvatarBox(positions, colors, remote, [0, 0.98, 0], [0.23, 0.34, 0.16], color);
+      appendAvatarBox(positions, colors, remote, [0, 1.48, 0], [0.2, 0.2, 0.2], color.map((channel) => Math.min(1, channel * 1.18)));
+      appendAvatarBox(positions, colors, remote, [-0.3, 1.02, 0], [0.09, 0.29, 0.11], color);
+      appendAvatarBox(positions, colors, remote, [0.3, 1.02, 0], [0.09, 0.29, 0.11], color);
+      appendAvatarBox(positions, colors, remote, [-0.12, 0.34, 0], [0.105, 0.31, 0.12], color.map((channel) => channel * 0.78));
+      appendAvatarBox(positions, colors, remote, [0.12, 0.34, 0], [0.105, 0.31, 0.12], color.map((channel) => channel * 0.78));
+
+      const label = getRemotePlayerLabel(remote.id);
+      const screenPosition = projectToCanvas(viewProjection, remote.state.x, remote.state.y + 1.75, remote.state.z);
+      label.hidden = !screenPosition;
+      if (screenPosition) {
+        label.style.left = `${screenPosition.x}px`;
+        label.style.top = `${screenPosition.y}px`;
+      }
+    }
+
+    if (!positions.length) return;
+    gl.bindBuffer(gl.ARRAY_BUFFER, avatarPositionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.DYNAMIC_DRAW);
+    gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, avatarColorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.DYNAMIC_DRAW);
+    gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, positions.length / 3);
   }
 
   function collidesAt(x, feetY, z) {
@@ -419,14 +583,18 @@
     const stepX = (forward[0] * forwardInput + Math.cos(player.yaw) * sideInput) / length * 4.5 * dt;
     const stepZ = (forward[2] * forwardInput + Math.sin(player.yaw) * sideInput) / length * 4.5 * dt;
 
-    const nextX = player.x + stepX;
+    const nextX = Math.max(PLAYER_RADIUS, Math.min(WORLD_WIDTH - PLAYER_RADIUS, player.x + stepX));
     if (!collidesAt(nextX, player.y, player.z)) player.x = nextX;
-    const nextZ = player.z + stepZ;
+    const nextZ = Math.max(PLAYER_RADIUS, Math.min(WORLD_DEPTH - PLAYER_RADIUS, player.z + stepZ));
     if (!collidesAt(player.x, player.y, nextZ)) player.z = nextZ;
 
     player.velocityY -= GRAVITY * dt;
     const nextY = player.y + player.velocityY * dt;
-    if (!collidesAt(player.x, nextY, player.z)) {
+    if (nextY < 0 && !collidesAt(player.x, 0, player.z)) {
+      player.y = 0;
+      player.velocityY = 0;
+      player.grounded = true;
+    } else if (!collidesAt(player.x, nextY, player.z)) {
       player.y = nextY;
       player.grounded = false;
     } else if (player.velocityY < 0) {
@@ -525,6 +693,13 @@
     saveGame();
     message.textContent = `${blocks[selectedBlock - 1].name}を置きました`;
   }
+
+  window.addEventListener("moneycraft:room-joined", receiveRoomJoined);
+  window.addEventListener("moneycraft:player-joined", receivePlayerJoined);
+  window.addEventListener("moneycraft:player-state", receivePlayerState);
+  window.addEventListener("moneycraft:player-left", (event) => removeRemotePlayer(event.detail?.id));
+  window.addEventListener("moneycraft:room-left", clearRemotePlayers);
+  window.addEventListener("moneycraft:room-closed", clearRemotePlayers);
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
   canvas.addEventListener("click", (event) => {
@@ -667,7 +842,7 @@
   window.addEventListener("blur", () => keys.clear());
   resetButton.addEventListener("click", () => {
     if (!window.confirm("ワールドを最初の状態に戻しますか？")) return;
-    createWorld();
+    worldModel.reset(Date.now());
     moveToSafeSpawn();
     player.yaw = 0;
     player.pitch = -0.12;
@@ -696,10 +871,20 @@
 
   try {
     initializeRenderer();
-    createWorld();
     loadGame();
     buildHotbar();
     rebuildWorldMesh();
+    window.setInterval(() => {
+      window.dispatchEvent(new CustomEvent("moneycraft:send-player-state", {
+        detail: {
+          x: player.x,
+          y: player.y,
+          z: player.z,
+          yaw: player.yaw,
+          pitch: player.pitch,
+        },
+      }));
+    }, PLAYER_STATE_INTERVAL_MS);
     window.requestAnimationFrame(frame);
   } catch (error) {
     console.error("The 3D world could not be initialized.", error);

@@ -7,6 +7,9 @@
     <meta name="description" content="ブラウザーで遊べる、オリジナルのブロック建築ゲーム。">
     <title>Moneycraft — ブロックの世界</title>
     <link rel="stylesheet" href="./style.css">
+    <script src="./config.js" defer></script>
+    <script src="./world-model.js" defer></script>
+    <script src="./multiplayer.js" defer></script>
     <script src="./game.js" defer></script>
   </head>
   <body>
@@ -25,6 +28,40 @@
         <p class="intro-copy">一人称の世界を歩き回って、ブロックで自由に建築しよう。</p>
       </section>
 
+      <section class="multiplayer-panel" aria-labelledby="multiplayer-title">
+        <div class="multiplayer-heading">
+          <div>
+            <p class="eyebrow">PLAY TOGETHER</p>
+            <h2 id="multiplayer-title">マルチプレイの部屋</h2>
+          </div>
+          <span class="multiplayer-capacity">最大8人</span>
+        </div>
+        <div class="room-actions">
+          <button class="room-button room-create" id="create-room" type="button">新しい部屋を作る</button>
+          <label class="room-code-label" for="room-code">部屋コード</label>
+          <input class="room-code-input" id="room-code" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="6" placeholder="例: ABC123" aria-label="参加する部屋コード">
+          <button class="room-button room-join" id="join-room" type="button">参加する</button>
+        </div>
+        <div class="room-status" id="room-status" role="status" aria-live="polite">部屋を作るか、招待コードを入力して参加できます。</div>
+        <p class="multiplayer-note">マルチプレイ中は他のプレイヤーの位置と向きを表示します。ブロック編集はまだ共有されません。</p>
+        <div class="room-details" id="room-details" hidden>
+          <div class="room-share">
+            <span>友だちにこのコードを共有</span>
+            <strong id="room-share-code"></strong>
+          </div>
+          <div class="room-roster">
+            <span class="roster-heading">参加中のプレイヤー</span>
+            <span class="roster-count" id="room-roster-count"></span>
+            <ul id="room-roster"></ul>
+          </div>
+          <div class="room-management">
+            <span id="room-owner-note"></span>
+            <button class="room-button room-leave" id="leave-room" type="button">退出</button>
+            <button class="room-button room-close" id="close-room" type="button" hidden>ワールドを閉じる</button>
+          </div>
+        </div>
+      </section>
+
       <section class="game-card" aria-label="ブロック建築ゲーム">
         <div class="game-toolbar">
           <div class="world-label">
@@ -37,6 +74,7 @@
           <canvas id="game" width="960" height="540" aria-label="一人称視点の3Dブロックワールド。WASDキーで移動し、マウスで視点を動かします。">
             このゲームを遊ぶには、WebGLに対応したブラウザーが必要です。
           </canvas>
+          <div class="remote-player-labels" id="remote-player-labels" aria-hidden="true"></div>
           <div class="crosshair" aria-hidden="true"><span></span></div>
           <output class="debug-indicator" id="debug-indicator" aria-live="polite" hidden></output>
           <div class="canvas-hint" id="game-message" aria-live="polite">ゲーム画面をクリックしてスタート</div>
