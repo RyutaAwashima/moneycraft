@@ -56,9 +56,10 @@ static assets. When publishing the client on GitHub Pages, set
 `MONEYCRAFT_CONFIG.apiBaseUrl` in `config.js` to the deployed Worker URL. The
 `ALLOWED_ORIGINS` Worker variable must include the Pages site origin.
 
-The local Durable Object storage is for development only. Deploying the Worker
-requires a Cloudflare account and is intentionally separate from GitHub Pages
-deployment.
+The published client currently connects to
+`https://moneycraft-realtime.pitagoramin-shizuoka.workers.dev`. The Worker uses
+Cloudflare Durable Objects for room state; local Durable Object storage is for
+development only. The client and Worker are deployed separately.
 
 ## Publish with GitHub Pages
 

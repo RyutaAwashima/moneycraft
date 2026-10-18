@@ -4,7 +4,7 @@
 > 作業の時系列記録は [`WORK_LOG.md`](./WORK_LOG.md)、実装計画と完了条件は
 > [`ROADMAP.md`](./ROADMAP.md) を参照する。
 
-最終更新: 2026-10-16 01:24 (JST)
+最終更新: 2026-10-19 07:56 (JST)
 
 ## 現在地
 
@@ -12,7 +12,7 @@
   Durable Objectsを使って少人数のマルチプレイに段階的に対応させる。
 - 完了: MVP要件の決定、ワールドモデルの分離、部屋サービスとプロトコルv1のローカル試作。
 - 一時停止中: **フェーズ3 — 状態送信と簡易3Dアバター表示は実装済み。実際の移動・視点操作に追従するかの確認が未完了。**
-- 本番Cloudflare環境へのデプロイは未実施。デプロイやアカウント変更は明示依頼なしに行わない。
+- Cloudflare Worker `moneycraft-realtime` を本番デプロイ済み。GitHub Pages originからのhealth checkとCORS preflightは成功。公開ページ接続設定を反映後、2ブラウザーでの公開環境テストが次の作業。
 - 共有ワールドの採掘・設置同期も未実装。フェーズ4以降で実施する。
 
 ## 決定済みのMVP要件
@@ -33,7 +33,7 @@
 - `game.js`: プレイヤー座標・向きを100ms間隔で送信し、他プレイヤーを補間した簡易アバターとして描画。表示名ラベル、退出時除去、5秒状態タイムアウトを実装。
 - `index.html`, `style.css`: 部屋UI、他プレイヤー表示とブロック未同期の案内。
 - `dev-server.js`: ローカルの静的ファイル開発サーバー。
-- `config.js`: localhost利用時にローカルWorker URLを選択。公開環境のAPI URLは未設定。
+- `config.js`: localhost利用時はローカルWorker、本番では `https://moneycraft-realtime.pitagoramin-shizuoka.workers.dev` を選択。
 
 **フェーズ3で確認できたこと:** 2ページで部屋に参加し、位置パケットの送受信、相手の簡易3Dアバター・名前ラベル表示、退出通知後の除去を確認。ゲームから送信された座標はY=1でプロトコルの許容範囲内だった。
 
@@ -56,6 +56,12 @@
 
 この検証はローカル試作に対するもの。本番環境や位置・ブロック同期の検証ではない。
 
+2026-10-19の本番準備:
+
+- Cloudflare Workerを本番デプロイし、`/api/health` がprotocolVersion 1を返すことを確認。
+- GitHub Pages origin `https://ryutaawashima.github.io` を指定したhealth checkと、部屋作成POST用CORS preflightが成功。
+- 公開ページの接続先を `config.js` に設定。GitHub Pagesへの反映後、2ブラウザーでの実プレイ確認が必要。
+
 ## 開発・検証の入口
 
 ローカルでWorkerとフロントエンドを別々に起動する:
@@ -68,8 +74,9 @@ node dev-server.js
 - フロントエンド: `http://127.0.0.1:49179`
 - Worker health check: `http://127.0.0.1:49180/api/health`
 - テスト: `node --test world-model.test.js src/protocol.test.js`
-- 公開時は `config.js` の `MONEYCRAFT_CONFIG.apiBaseUrl` とWorkerの
-  `ALLOWED_ORIGINS` を実際のデプロイ先に合わせる。Pages originもallowlistに必要。
+- 本番Worker: `https://moneycraft-realtime.pitagoramin-shizuoka.workers.dev`
+- 本番Worker health check: `https://moneycraft-realtime.pitagoramin-shizuoka.workers.dev/api/health`
+- Workerの `ALLOWED_ORIGINS` にPages originを含める。現在のデプロイでは含まれることを確認済み。
 
 ローカルポートは以前ほかのプロセスと競合したことがある。起動前に空き状況を確認し、
 既存プロセスが見つかっても、今回起動したものと確認できない限り停止しない。

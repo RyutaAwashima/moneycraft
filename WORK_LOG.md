@@ -128,3 +128,14 @@
 - [`PROGRESS.md`](./PROGRESS.md) の次回再開手順を、前面の2画面を使った通常操作による
   移動・旋回確認から始めるよう更新。フェーズ3は引き続き「実装中／未完了」。
 - 変更は未ステージ・未コミット。ローカル開発サーバーや `.wrangler/` の状態は次回確認する。
+
+## 2026-10-19 — 公開環境マルチプレイの準備
+
+- ユーザー了承のもと、現在Wranglerで認証済みのCloudflareアカウントへ
+  `moneycraft-realtime` Workerをデプロイ。Durable Object bindingとPages originを含む既存設定を使用。
+- 公開URL: `https://moneycraft-realtime.pitagoramin-shizuoka.workers.dev`。
+  `/api/health` がHTTP 200・protocolVersion 1を返し、GitHub Pages originからのレスポンスと
+  `/api/rooms` POST向けCORS preflightが成功。
+- `config.js` の本番接続先をWorker URLに設定。`README.md`、`PROGRESS.md` を更新。
+- `wrangler deploy --dry-run` 成功。`node --test world-model.test.js src/protocol.test.js` は6件成功。
+- 公開ページ反映後に、2ブラウザーで部屋作成・参加・移動同期を実地確認する。
