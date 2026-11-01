@@ -99,7 +99,7 @@
       activeSocket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "player-state", payload: state }));
     } catch (error) {
       console.error("Could not send the local player state.", error);
-      activeSocket.close(1011, "Player state delivery failed");
+      activeSocket.close(4011, "Player state delivery failed");
     }
   }
 
@@ -114,7 +114,7 @@
     } catch (error) {
       console.error("Could not send a shared world message.", error);
       setStatus("建築の変更を送信できませんでした。再参加してください。", "error");
-      activeSocket.close(1011, "World message delivery failed");
+      activeSocket.close(4011, "World message delivery failed");
       emitRoomEvent("world-send-failed", payload);
     }
   }
@@ -123,7 +123,7 @@
     if (socket !== activeSocket) return;
     if (!packet || packet.v !== PROTOCOL_VERSION || typeof packet.type !== "string") {
       setStatus("サーバー応答の形式が正しくありません。", "error");
-      socket.close(1002, "Invalid protocol message");
+      socket.close(4002, "Invalid protocol message");
       return;
     }
 
@@ -134,7 +134,7 @@
         || typeof welcome.player.displayName !== "string" || !Array.isArray(welcome.players)
         || !welcome.world || !Number.isSafeInteger(welcome.revision) || welcome.revision < 0) {
         setStatus("部屋の初期状態を読み込めませんでした。", "error");
-        socket.close(1002, "Invalid welcome message");
+        socket.close(4002, "Invalid welcome message");
         return;
       }
       localPlayerId = welcome.player.id;
@@ -173,7 +173,7 @@
       if (typeof update?.playerId !== "string" || !state
         || !["x", "y", "z", "yaw", "pitch"].every((key) => Number.isFinite(state[key]))) {
         setStatus("プレイヤー位置の通信形式が正しくありません。", "error");
-        socket.close(1002, "Invalid player state");
+        socket.close(4002, "Invalid player state");
         return;
       }
       emitRoomEvent("player-state", {
@@ -233,7 +233,7 @@
       } catch (error) {
         console.error("Could not parse a multiplayer message.", error);
         setStatus("サーバーから読み取れない通信を受信しました。", "error");
-        socket.close(1007, "Invalid JSON");
+        socket.close(4007, "Invalid JSON");
         return;
       }
       handleRoomMessage(packet, socket);
@@ -401,7 +401,7 @@
   window.addEventListener("moneycraft:world-protocol-error", () => {
     worldReady = false;
     setStatus("共有ワールドの通信形式が正しくありません。再参加してください。", "error");
-    activeSocket?.close(1002, "Invalid world message");
+    activeSocket?.close(4002, "Invalid world message");
   });
 
   const ownerSession = readOwnerSession();

@@ -89,7 +89,7 @@ node dev-server.js
 
 - フロントエンド: `http://127.0.0.1:49179`
 - Worker health check: `http://127.0.0.1:49180/api/health`
-- テスト: `node --test world-model.test.js game.test.js src/protocol.test.js src/room.test.js`
+- テスト: `node --test world-model.test.js game.test.js multiplayer.test.js src/protocol.test.js src/room.test.js`
 - 本番Worker: `https://moneycraft-realtime.pitagoramin-shizuoka.workers.dev`
 - 本番Worker health check: `https://moneycraft-realtime.pitagoramin-shizuoka.workers.dev/api/health`
 - Workerの `ALLOWED_ORIGINS` にPages originを含める。現在のデプロイでは含まれることを確認済み。

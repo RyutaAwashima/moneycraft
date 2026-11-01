@@ -64,7 +64,7 @@ Keep the room code to resume; no export, reopening of closed rooms, or
 automatic room expiry is implemented.
 
 Run the focused tests with
-`node --test world-model.test.js game.test.js src/protocol.test.js src/room.test.js`.
+`node --test world-model.test.js game.test.js multiplayer.test.js src/protocol.test.js src/room.test.js`.
 
 Run `wrangler dev --ip 127.0.0.1 --port 49180` and `node dev-server.js` in separate terminals
 to test the room service and game locally. The page is available at
