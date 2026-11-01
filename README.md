@@ -80,13 +80,18 @@ The published client currently connects to
 Cloudflare Durable Objects for room state; local Durable Object storage is for
 development only. The client and Worker are deployed separately.
 
+The cooperative-building release is published on GitHub Pages and the Worker
+as of 2026-11-01. Production checks confirmed shared edits, conflict rejection,
+late-join snapshots, and owner closure. Browser checks used direct gameplay
+events, not a full normal mouse-input session. Before class, verify normal
+movement, aiming, mining, and placement from two actual devices.
+
 This implementation uses protocol **v2** and requires both the updated Worker
 and client. Deploy the Worker first (`wrangler deploy`), publish the updated
 static client, then reload all participating browsers. A v1 client cannot
 exchange gameplay messages with a v2 Worker. No new dependencies, bindings,
-or configuration changes are required. Local validation is not a production
-deployment; verify two-browser building and normal movement on the published
-site before using it in class.
+or configuration changes are required. Reload existing browser tabs to receive
+the updated client.
 
 ## Publish with GitHub Pages
 
