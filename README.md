@@ -42,6 +42,22 @@ room temporarily switches to its shared world without overwriting the solo
 save. Leaving, disconnecting, or closing a room restores the original solo
 world. The reset button is disabled while joining or participating in a room.
 
+## Terrain and world sizes
+
+New solo worlds and newly created rooms are **64 × 64 × 20**. The western
+38 × 64 columns (about 60% of the area) are level grassland: grass at block
+height 5, with no trees or leaves above it. The remaining eastern area is
+forest with hills and denser trees. A six-column transition eases the terrain
+from the plain into the hills. Players spawn in the grassland.
+
+Existing **40 × 40 × 20** local saves and rooms keep their dimensions, terrain,
+and buildings. The oldest array-only local saves are also supported. Simply
+reloading or rejoining does not regenerate or enlarge an existing world.
+Creating a new room gives the new terrain. Resetting a solo world explicitly
+replaces it with a fresh 64-square world, after confirmation; this deletes its
+existing buildings. To keep an old solo world, use a new room instead of reset.
+The game header shows the current world's size and terrain.
+
 ## Multiplayer development
 
 See [ROADMAP.md](./ROADMAP.md) for the selected MVP requirements, proposed
@@ -57,8 +73,13 @@ Only edited chunks and their affected neighbors are rebuilt.
 
 The server validates block IDs, coordinates, reach, and placements overlapping
 participants. Edits are limited to 10 per second per participant; position
-messages to 20 per second; snapshot requests to two per second. The fixed
-40 × 40 × 20 world bounds storage size. Worlds survive disconnects and Worker
+messages to 20 per second; snapshot requests to two per second. Coordinates
+are checked against each room's actual size, not a global 40-square limit.
+New room snapshots are stored as metadata plus 8,192-cell binary parts, each
+well below the per-value storage limit. Block edits atomically update one part
+and its revision; older single-value snapshots migrate without altering their
+buildings on the next accepted edit. Missing or corrupt parts fail explicitly
+instead of regenerating the terrain. Worlds survive disconnects and Worker
 restarts until the owner closes the room, which deletes the shared world.
 Keep the room code to resume; no export, reopening of closed rooms, or
 automatic room expiry is implemented.
@@ -86,10 +107,15 @@ late-join snapshots, and owner closure. Browser checks used direct gameplay
 events, not a full normal mouse-input session. Before class, verify normal
 movement, aiming, mining, and placement from two actual devices.
 
-This implementation uses protocol **v2** and requires both the updated Worker
+The expanded forest/grassland release uses protocol **v3**. Its Worker was
+deployed on 2026-11-01; publish the matching static client and reload browser
+tabs to use it. New rooms use 64-square worlds; existing rooms remain 40-square.
+
+This implementation requires both the updated Worker
 and client. Deploy the Worker first (`wrangler deploy`), publish the updated
-static client, then reload all participating browsers. A v1 client cannot
-exchange gameplay messages with a v2 Worker. No new dependencies, bindings,
+static client, then reload all participating browsers. A v1/v2 client cannot
+exchange gameplay messages with a v3 Worker, but a v3 client can still join
+existing 40-square rooms. No new dependencies, bindings,
 or configuration changes are required. Reload existing browser tabs to receive
 the updated client.
 

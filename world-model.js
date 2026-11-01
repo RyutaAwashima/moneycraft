@@ -3,6 +3,8 @@
 ((root) => {
   const FORMAT_VERSION = 1;
   const DEFAULT_SEED = 20261015;
+  const DEFAULT_OPTIONS = Object.freeze({ width: 64, depth: 64, height: 20, terrain: "forest-plains" });
+  const LEGACY_OPTIONS = Object.freeze({ width: 40, depth: 40, height: 20, terrain: "legacy" });
   const blocks = Object.freeze([
     { id: 1, name: "草ブロック", color: [0.39, 0.65, 0.27] },
     { id: 2, name: "土ブロック", color: [0.52, 0.32, 0.18] },
@@ -15,14 +17,22 @@
     { id: 9, name: "窓ブロック", color: [0.48, 0.73, 0.83] },
   ].map((block) => Object.freeze({ ...block, color: Object.freeze(block.color) })));
 
-  function createModel({ width, depth, height, blockCount = blocks.length, seed = DEFAULT_SEED }) {
+  function isSupportedDimensions(value) {
+    return value !== null && typeof value === "object" && value.height === 20
+      && ((value.width === 40 && value.depth === 40) || (value.width === 64 && value.depth === 64));
+  }
+
+  function createModel({ width, depth, height, blockCount = blocks.length, seed = DEFAULT_SEED, terrain = "legacy" }) {
     if (![width, depth, height, blockCount].every(Number.isSafeInteger)
       || width < 1 || depth < 1 || height < 1 || blockCount < 1 || blockCount > 255) {
       throw new TypeError("World dimensions must be positive integers and block count must be between 1 and 255.");
     }
+    if (!["legacy", "forest-plains"].includes(terrain)) throw new TypeError("Unknown terrain generator.");
 
     let data = new Uint8Array(width * depth * height);
     let worldSeed = seed >>> 0;
+    let terrainType = terrain;
+    const plainsWidth = Math.floor(width * 0.6);
 
     function inBounds(x, y, z) {
       return Number.isInteger(x) && Number.isInteger(y) && Number.isInteger(z)
@@ -72,7 +82,10 @@
       const heights = Array.from({ length: depth }, () => Array(width).fill(0));
       for (let z = 0; z < depth; z += 1) {
         for (let x = 0; x < width; x += 1) {
-          const surface = terrainHeight(x, z);
+          const transition = Math.max(0, Math.min(1, (x - plainsWidth) / 6));
+          const blend = transition * transition * (3 - 2 * transition);
+          const surface = terrainType === "legacy" ? terrainHeight(x, z)
+            : x < plainsWidth ? 5 : Math.round(5 + (terrainHeight(x, z) - 5) * blend);
           heights[z][x] = surface;
           for (let y = 0; y <= surface && y < height; y += 1) {
             setBlock(x, y, z, y === surface ? 1 : y >= surface - 3 ? 2 : 3);
@@ -83,7 +96,8 @@
       const random = randomGenerator(worldSeed);
       for (let z = 3; z < depth - 3; z += 1) {
         for (let x = 3; x < width - 3; x += 1) {
-          if (random() > 0.04) continue;
+          if (terrainType === "forest-plains" && x < plainsWidth + 2) continue;
+          if (random() > (terrainType === "legacy" ? 0.04 : 0.08)) continue;
           const ground = heights[z][x];
           const trunkHeight = 3 + Math.floor(random() * 2);
           for (let dy = 1; dy <= trunkHeight; dy += 1) setBlock(x, ground + dy, z, 4);
@@ -112,16 +126,19 @@
     function load(snapshot) {
       const isLegacy = Array.isArray(snapshot);
       const blocks = isLegacy ? snapshot : snapshot?.blocks;
+      const nextTerrain = isLegacy ? "legacy" : snapshot?.terrain ?? "legacy";
       if (!isLegacy && (!snapshot || snapshot.version !== FORMAT_VERSION
         || snapshot.width !== width || snapshot.depth !== depth || snapshot.height !== height)) {
         return false;
       }
+      if (!["legacy", "forest-plains"].includes(nextTerrain)) return false;
       if (!Array.isArray(blocks) || blocks.length !== data.length
         || !blocks.every((block) => Number.isInteger(block) && block >= 0 && block <= blockCount)) {
         return false;
       }
       const nextData = Uint8Array.from(blocks);
       data = nextData;
+      terrainType = nextTerrain;
       if (!isLegacy && Number.isSafeInteger(snapshot.seed)) worldSeed = snapshot.seed >>> 0;
       return true;
     }
@@ -133,6 +150,7 @@
         depth,
         height,
         seed: worldSeed,
+        ...(terrainType === "legacy" ? {} : { terrain: terrainType }),
         blocks: Array.from(data),
       };
     }
@@ -140,6 +158,11 @@
     reset(worldSeed);
     return Object.freeze({
       dimensions: Object.freeze({ width, depth, height }),
+      get terrain() { return terrainType; },
+      get spawnCenter() {
+        return { x: terrainType === "forest-plains" ? Math.floor(plainsWidth / 2) + 0.5 : width / 2 + 0.5,
+          z: depth / 2 + 0.5 };
+      },
       formatVersion: FORMAT_VERSION,
       getBlock,
       setBlock,
@@ -151,5 +174,8 @@
     });
   }
 
-  root.MoneycraftWorld = Object.freeze({ createModel, blocks, formatVersion: FORMAT_VERSION });
+  root.MoneycraftWorld = Object.freeze({
+    createModel, blocks, defaultOptions: DEFAULT_OPTIONS, legacyOptions: LEGACY_OPTIONS,
+    isSupportedDimensions, formatVersion: FORMAT_VERSION,
+  });
 })(globalThis);

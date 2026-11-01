@@ -22,7 +22,7 @@
   let maxPlayers = 8;
   let isRoomOwner = false;
   let worldReady = false;
-  const PROTOCOL_VERSION = 2;
+  const PROTOCOL_VERSION = 3;
   const players = new Map();
 
   function setStatus(text, state = "idle") {

@@ -25,6 +25,16 @@ function createContext() {
       async get(key) { return structuredClone(data.get(key)); },
       async put(key, value) { data.set(key, structuredClone(value)); },
       async deleteAll() { data.clear(); },
+      async transaction(callback) {
+        const before = structuredClone(data);
+        try {
+          return await callback(this);
+        } catch (error) {
+          data.clear();
+          for (const [key, value] of before) data.set(key, value);
+          throw error;
+        }
+      },
     },
     getWebSockets() { return this.sockets.filter((socket) => socket.readyState === 1); },
     acceptWebSocket(socket) { this.sockets.push(socket); },
@@ -69,8 +79,14 @@ test("room edits broadcast only after persistence and survive a new Room instanc
   await send(room, one, "block-edit", placement);
   assert.equal(one.messages.at(-1).type, "block-changed");
   assert.deepEqual(one.messages.at(-1), two.messages.at(-1));
-  const persisted = await ctx.storage.get("world");
-  assert.ok(new TextEncoder().encode(JSON.stringify(persisted)).byteLength < 128 * 1024);
+  const persisted = await room.getWorldSnapshot(123);
+  const metadata = await ctx.storage.get("world");
+  assert.equal(metadata.partCount, 10);
+  for (let i = 0; i < metadata.partCount; i += 1) {
+    const part = await ctx.storage.get(`world-part-${i}`);
+    assert.ok(part.byteLength <= 8192);
+    assert.ok(new TextEncoder().encode(JSON.stringify(Array.from(part))).byteLength < 128 * 1024);
+  }
   assert.equal(persisted.revision, 1);
   const model = globalThis.MoneycraftWorld.createModel(WORLD_DIMENSIONS);
   assert.equal(model.load(persisted.world), true);
@@ -164,7 +180,7 @@ test("welcome includes the latest full world, and old rooms initialize determini
     assert.equal(connected.status, 101);
     const welcome = ctx.sockets.at(-1).messages[0].payload;
     assert.equal(welcome.revision, 1);
-    assert.deepEqual(welcome.world, (await ctx.storage.get("world")).world);
+    assert.deepEqual(welcome.world, (await room.getWorldSnapshot(123)).world);
     assert.equal(welcome.roomCode, "ABCD23");
     while (ctx.sockets.length < 8) addPlayer(ctx, `player-${ctx.sockets.length}`);
     const full = await room.fetch(new Request("https://room.internal/connect?code=ABCD23", {
@@ -174,10 +190,72 @@ test("welcome includes the latest full world, and old rooms initialize determini
     const legacy = createContext();
     await legacy.storage.put("room", { worldSeed: 123 });
     const migrated = await new Room(legacy).getWorldSnapshot(123);
-    const initial = globalThis.MoneycraftWorld.createModel({ ...WORLD_DIMENSIONS, seed: 123 });
+    const initial = globalThis.MoneycraftWorld.createModel({ ...globalThis.MoneycraftWorld.legacyOptions, seed: 123 });
     assert.deepEqual(migrated.world, initial.serialize());
   } finally {
     globalThis.Response = OriginalResponse;
     delete globalThis.WebSocketPair;
   }
+});
+
+test("legacy saved rooms preserve dimensions and buildings through transactional storage migration", async () => {
+  const ctx = createContext();
+  const room = new Room(ctx);
+  const oldModel = globalThis.MoneycraftWorld.createModel({ ...globalThis.MoneycraftWorld.legacyOptions, seed: 123 });
+  oldModel.setBlock(12, 16, 10, 9);
+  const oldSnapshot = { world: oldModel.serialize(), revision: 27 };
+  await ctx.storage.put("room", { worldSeed: 123 });
+  await ctx.storage.put("world", oldSnapshot);
+  assert.deepEqual(await room.getWorldSnapshot(123), oldSnapshot);
+  const socket = addPlayer(ctx);
+  await send(room, socket, "player-state", { x: 50, y: 16, z: 10, yaw: 0, pitch: 0 });
+  assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
+  await send(room, socket, "block-edit", { ...placement, x: 40 });
+  assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
+  await send(room, socket, "block-edit", { ...placement, block: 0, expectedBlock: 9 });
+  assert.equal(socket.messages.at(-1).type, "block-changed");
+  const restored = await new Room(ctx).getWorldSnapshot(123);
+  assert.equal(restored.world.width, 40);
+  assert.equal(restored.world.depth, 40);
+  oldModel.setBlock(12, 16, 10, 0);
+  assert.deepEqual(restored.world, oldModel.serialize());
+  assert.equal(restored.revision, 28);
+  assert.equal((await ctx.storage.get("world")).storageVersion, 1);
+});
+
+test("large-room edge edits persist only the changed part and metadata", async () => {
+  const { ctx, room } = await setupRoom();
+  const socket = addPlayer(ctx, "edge-player", { x: 60.5, y: 16, z: 60.5, yaw: 0, pitch: 0 });
+  const put = ctx.storage.put.bind(ctx.storage);
+  const writes = [];
+  ctx.storage.put = async (key, value) => { writes.push(key); await put(key, value); };
+  const edit = { ...placement, x: 63, z: 63, block: 8 };
+  await send(room, socket, "block-edit", edit);
+  assert.equal(socket.messages.at(-1).type, "block-changed");
+  assert.deepEqual(writes, ["world-part-8", "world"]);
+  const restored = await new Room(ctx).getWorldSnapshot(123);
+  assert.equal(restored.world.blocks[(16 * 64 + 63) * 64 + 63], 8);
+  assert.equal(restored.world.terrain, "forest-plains");
+});
+
+test("part and revision writes roll back together on storage failure", async () => {
+  const { ctx, room } = await setupRoom();
+  const before = await room.getWorldSnapshot(123);
+  const socket = addPlayer(ctx);
+  const put = ctx.storage.put.bind(ctx.storage);
+  ctx.storage.put = async (key, value) => {
+    if (key === "world") throw new Error("metadata write failed");
+    await put(key, value);
+  };
+  await send(room, socket, "block-edit", placement);
+  assert.equal(socket.closeCode, 1011);
+  assert.deepEqual(await new Room(ctx).getWorldSnapshot(123), before);
+});
+
+test("missing world parts fail explicitly rather than regenerating buildings", async () => {
+  const { ctx, room } = await setupRoom();
+  await ctx.storage.put("world-part-0", null);
+  await assert.rejects(room.getWorldSnapshot(123), /missing or invalid/);
+  await ctx.storage.put("world", null);
+  await assert.rejects(room.getWorldSnapshot(123), /metadata is missing/);
 });

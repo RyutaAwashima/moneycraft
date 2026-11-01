@@ -19,9 +19,6 @@
     return;
   }
 
-  const WORLD_WIDTH = 40;
-  const WORLD_DEPTH = 40;
-  const WORLD_HEIGHT = 20;
   const SAVE_KEY = "moneycraft-3d-world-v2";
   const PLAYER_HEIGHT = 1.7;
   const PLAYER_RADIUS = 0.28;
@@ -31,11 +28,7 @@
   const GRAVITY = 19;
   const JUMP_SPEED = 7.8;
   const blocks = globalThis.MoneycraftWorld.blocks;
-  const worldModel = globalThis.MoneycraftWorld.createModel({
-    width: WORLD_WIDTH,
-    depth: WORLD_DEPTH,
-    height: WORLD_HEIGHT,
-  });
+  let worldModel = globalThis.MoneycraftWorld.createModel(globalThis.MoneycraftWorld.defaultOptions);
   const keys = new Set();
   const touchPointers = new Map();
   const touchMove = { x: 0, z: 0 };
@@ -79,6 +72,30 @@
   let snapshotTimer = 0;
   const pendingEdits = new Map();
 
+  function loadWorld(snapshot) {
+    const options = Array.isArray(snapshot) ? globalThis.MoneycraftWorld.legacyOptions : snapshot;
+    if (!globalThis.MoneycraftWorld.isSupportedDimensions(options)) return false;
+    const current = worldModel.dimensions;
+    if (current.width === options.width && current.depth === options.depth && current.height === options.height) {
+      if (!worldModel.load(snapshot)) return false;
+    } else {
+      const restored = globalThis.MoneycraftWorld.createModel({
+        width: options.width, depth: options.depth, height: options.height,
+      });
+      if (!restored.load(snapshot)) return false;
+      worldModel = restored;
+    }
+    updateWorldLabel();
+    return true;
+  }
+
+  function updateWorldLabel() {
+    const { width, depth } = worldModel.dimensions;
+    document.querySelector("#world-label").textContent = worldModel.terrain === "forest-plains"
+      ? `草原と森 · ${width}×${depth}`
+      : `ひだまりの丘 · ${width}×${depth}`;
+  }
+
   function emitWorldEvent(type, detail) {
     window.dispatchEvent(new CustomEvent(`moneycraft:${type}`, { detail }));
   }
@@ -114,7 +131,7 @@
     clearPendingEdits();
     awaitingSnapshot = false;
     if (!soloSnapshot) return;
-    if (!worldModel.load(soloSnapshot.world)) {
+    if (!loadWorld(soloSnapshot.world)) {
       throw new Error("Could not restore the solo world.");
     }
     player = { ...soloSnapshot.player };
@@ -148,7 +165,9 @@
     const snapshot = event.detail;
     if (roomMode === "solo") return;
     if (!snapshot || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0
-      || !worldModel.load(snapshot.world)) {
+      || (roomMode === "shared" && (snapshot.world?.width !== worldModel.dimensions.width
+        || snapshot.world?.depth !== worldModel.dimensions.depth || snapshot.world?.height !== worldModel.dimensions.height))
+      || !loadWorld(snapshot.world)) {
       invalidWorldMessage();
       return false;
     }
@@ -156,7 +175,8 @@
     awaitingSnapshot = false;
     clearPendingEdits();
     rebuildWorldMesh();
-    if (collidesAt(player.x, player.y, player.z)) moveToSafeSpawn();
+    if (!inBounds(Math.floor(player.x), Math.floor(player.y), Math.floor(player.z))
+      || collidesAt(player.x, player.y, player.z)) moveToSafeSpawn();
     saveState.textContent = "共有ワールドをサーバーに保存";
     return true;
   }
@@ -357,10 +377,12 @@
   }
 
   function moveToSafeSpawn() {
+    const { width, depth } = worldModel.dimensions;
+    const center = worldModel.spawnCenter;
     const candidates = [];
-    for (let z = 2; z < WORLD_DEPTH - 2; z += 1) {
-      for (let x = 2; x < WORLD_WIDTH - 2; x += 1) {
-        candidates.push({ x: x + 0.5, z: z + 0.5, distance: (x + 0.5 - 20.5) ** 2 + (z + 0.5 - 20.5) ** 2 });
+    for (let z = 2; z < depth - 2; z += 1) {
+      for (let x = 2; x < width - 2; x += 1) {
+        candidates.push({ x: x + 0.5, z: z + 0.5, distance: (x + 0.5 - center.x) ** 2 + (z + 0.5 - center.z) ** 2 });
       }
     }
     candidates.sort((a, b) => a.distance - b.distance);
@@ -385,12 +407,15 @@
       const saved = localStorage.getItem(SAVE_KEY);
       if (saved) {
         const data = JSON.parse(saved);
-        if (Number.isFinite(data.x) && Number.isFinite(data.z) && worldModel.load(data.world)) {
-          player.x = Math.max(1, Math.min(WORLD_WIDTH - 1, data.x));
-          player.z = Math.max(1, Math.min(WORLD_DEPTH - 1, data.z));
+        if (Number.isFinite(data.x) && Number.isFinite(data.z) && loadWorld(data.world)) {
+          const { width, depth } = worldModel.dimensions;
+          player.x = Math.max(1, Math.min(width - 1, data.x));
+          player.z = Math.max(1, Math.min(depth - 1, data.z));
           player.y = worldModel.findSurface(player.x, player.z);
           if (Number.isFinite(data.yaw)) player.yaw = data.yaw;
           if (!collidesAt(player.x, player.y, player.z)) return;
+        } else {
+          throw new Error("Saved world dimensions or block data are invalid.");
         }
       }
     } catch (error) {
@@ -416,9 +441,16 @@
   }
 
   function rebuildWorldMesh() {
-    for (let y = 0; y < WORLD_HEIGHT; y += CHUNK_SIZE) {
-      for (let z = 0; z < WORLD_DEPTH; z += CHUNK_SIZE) {
-        for (let x = 0; x < WORLD_WIDTH; x += CHUNK_SIZE) rebuildChunk(x, y, z);
+    const { width, depth, height } = worldModel.dimensions;
+    for (const [key, mesh] of chunkMeshes) {
+      const [x, y, z] = key.split(",").map(Number);
+      if (x < width && y < height && z < depth) continue;
+      for (const buffer of [mesh.position, mesh.color, mesh.uv]) gl.deleteBuffer(buffer);
+      chunkMeshes.delete(key);
+    }
+    for (let y = 0; y < height; y += CHUNK_SIZE) {
+      for (let z = 0; z < depth; z += CHUNK_SIZE) {
+        for (let x = 0; x < width; x += CHUNK_SIZE) rebuildChunk(x, y, z);
       }
     }
   }
@@ -611,11 +643,12 @@
   }
 
   function isRemotePlayerState(state) {
+    const { width, depth, height } = worldModel.dimensions;
     return state !== null
       && typeof state === "object"
-      && Number.isFinite(state.x) && state.x >= 0 && state.x <= WORLD_WIDTH
-      && Number.isFinite(state.y) && state.y >= 0 && state.y <= WORLD_HEIGHT + 10
-      && Number.isFinite(state.z) && state.z >= 0 && state.z <= WORLD_DEPTH
+      && Number.isFinite(state.x) && state.x >= 0 && state.x <= width
+      && Number.isFinite(state.y) && state.y >= 0 && state.y <= height + 10
+      && Number.isFinite(state.z) && state.z >= 0 && state.z <= depth
       && Number.isFinite(state.yaw)
       && Number.isFinite(state.pitch) && state.pitch >= -1.5 && state.pitch <= 1.5;
   }
@@ -849,6 +882,7 @@
   }
 
   function update(dt) {
+    const { width, depth } = worldModel.dimensions;
     const forwardInput = Math.max(-1, Math.min(1,
       Number(keys.has("KeyW") || keys.has("ArrowUp"))
       - Number(keys.has("KeyS") || keys.has("ArrowDown"))
@@ -862,9 +896,9 @@
     const stepX = (forward[0] * forwardInput + Math.cos(player.yaw) * sideInput) / length * 4.5 * dt;
     const stepZ = (forward[2] * forwardInput + Math.sin(player.yaw) * sideInput) / length * 4.5 * dt;
 
-    const nextX = Math.max(PLAYER_RADIUS, Math.min(WORLD_WIDTH - PLAYER_RADIUS, player.x + stepX));
+    const nextX = Math.max(PLAYER_RADIUS, Math.min(width - PLAYER_RADIUS, player.x + stepX));
     if (!collidesAt(nextX, player.y, player.z)) player.x = nextX;
-    const nextZ = Math.max(PLAYER_RADIUS, Math.min(WORLD_DEPTH - PLAYER_RADIUS, player.z + stepZ));
+    const nextZ = Math.max(PLAYER_RADIUS, Math.min(depth - PLAYER_RADIUS, player.z + stepZ));
     if (!collidesAt(player.x, player.y, nextZ)) player.z = nextZ;
 
     player.velocityY -= GRAVITY * dt;
@@ -1128,8 +1162,11 @@
   window.addEventListener("blur", () => keys.clear());
   resetButton.addEventListener("click", () => {
     if (roomMode !== "solo") return;
-    if (!window.confirm("ワールドを最初の状態に戻しますか？")) return;
-    worldModel.reset(Date.now());
+    if (!window.confirm("ひとり用ワールドを新しい64×64の草原と森に置き換えますか？今の建築は削除されます。")) return;
+    worldModel = globalThis.MoneycraftWorld.createModel({
+      ...globalThis.MoneycraftWorld.defaultOptions, seed: Date.now(),
+    });
+    updateWorldLabel();
     moveToSafeSpawn();
     player.yaw = 0;
     player.pitch = -0.12;
@@ -1159,6 +1196,7 @@
   try {
     initializeRenderer();
     loadGame();
+    updateWorldLabel();
     buildHotbar();
     rebuildWorldMesh();
     window.setInterval(sendCurrentPlayerState, PLAYER_STATE_INTERVAL_MS);

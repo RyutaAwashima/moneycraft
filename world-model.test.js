@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { createHash } = require("node:crypto");
 
 const source = fs.readFileSync(path.join(__dirname, "world-model.js"), "utf8");
 const context = {};
@@ -19,6 +20,54 @@ function createWorld(seed = 1234) {
 test("same seed creates identical worlds", () => {
   assert.deepEqual(createWorld(10).serialize(), createWorld(10).serialize());
   assert.notDeepEqual(createWorld(10).serialize(), createWorld(11).serialize());
+});
+
+test("64-square forest-plains worlds guarantee a level, tree-free building area", () => {
+  const api = context.MoneycraftWorld;
+  for (const seed of [1, 123, 20261015]) {
+    const world = createModel({ ...api.defaultOptions, seed });
+    const groundHeights = new Set();
+    let forestTrunks = 0;
+    for (let z = 0; z < 64; z += 1) {
+      for (let x = 0; x < 64; x += 1) {
+        if (x < 38) {
+          assert.equal(world.findSurface(x, z), 6);
+          assert.equal(world.getBlock(x, 5, z), 1);
+          for (let y = 6; y < 20; y += 1) assert.equal(world.getBlock(x, y, z), 0);
+        } else {
+          for (let y = 19; y >= 0; y -= 1) {
+            if (world.getBlock(x, y, z) === 1) { groundHeights.add(y); break; }
+          }
+          for (let y = 6; y < 20; y += 1) if (world.getBlock(x, y, z) === 4) forestTrunks += 1;
+        }
+      }
+    }
+    assert.equal(world.serialize().blocks.length, 81920);
+    assert.ok(38 * 64 / (64 * 64) >= 0.59);
+    assert.ok(forestTrunks > 50);
+    assert.ok(groundHeights.size > 1);
+    assert.equal(world.terrain, "forest-plains");
+    assert.ok(world.spawnCenter.x < 38);
+    assert.deepEqual(world.serialize(), createModel({ ...api.defaultOptions, seed }).serialize());
+  }
+});
+
+test("forest-plains terrain selection round-trips and survives reset", () => {
+  const options = context.MoneycraftWorld.defaultOptions;
+  const world = createModel({ ...options, seed: 123 });
+  const restored = createModel({ width: 64, depth: 64, height: 20 });
+  assert.equal(restored.load(world.serialize()), true);
+  restored.reset(123);
+  assert.deepEqual(restored.serialize(), world.serialize());
+  const before = restored.serialize();
+  assert.equal(restored.load({ ...before, terrain: "unknown" }), false);
+  assert.deepEqual(restored.serialize(), before);
+});
+
+test("the legacy 40-square generator remains identical to the published hills", () => {
+  const world = createModel({ ...context.MoneycraftWorld.legacyOptions, seed: 123 });
+  const digest = createHash("sha256").update(JSON.stringify(world.serialize())).digest("hex");
+  assert.equal(digest.slice(0, 16), "bac22efd313af023");
 });
 
 test("block access enforces coordinates and block identifiers", () => {

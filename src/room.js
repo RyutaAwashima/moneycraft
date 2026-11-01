@@ -11,6 +11,7 @@ import {
 } from "./protocol.js";
 
 const OWNER_TOKEN_HEADER = "x-room-owner-token";
+const WORLD_PART_SIZE = 8192;
 const DISPLAY_NAME_PREFIXES = [
   "こもれび",
   "ひだまり",
@@ -80,12 +81,18 @@ export class Room {
     if (typeof ownerToken !== "string" || ownerToken.length < 32 || !Number.isSafeInteger(worldSeed)) {
       return jsonResponse({ error: "invalid_room_setup" }, 400);
     }
-    await this.ctx.storage.put("room", {
+    const room = {
       createdAt: Date.now(),
       ownerTokenHash: toHex(await digestToken(ownerToken)),
       worldSeed: worldSeed >>> 0,
+      worldOptions: WORLD_DIMENSIONS,
+    };
+    const model = globalThis.MoneycraftWorld.createModel({ ...WORLD_DIMENSIONS, seed: room.worldSeed });
+    const snapshot = { world: model.serialize(), revision: 0 };
+    await this.ctx.storage.transaction(async (transaction) => {
+      await transaction.put("room", room);
+      await this.writeWorldSnapshot(transaction, snapshot);
     });
-    await this.getWorldSnapshot(worldSeed);
     return jsonResponse({ ok: true }, 201);
   }
 
@@ -129,6 +136,7 @@ export class Room {
       messageCount: 0,
       editCount: 0,
       snapshotCount: 0,
+      dimensions: { width: snapshot.world.width, depth: snapshot.world.depth, height: snapshot.world.height },
     };
     server.serializeAttachment(player);
     this.ctx.acceptWebSocket(server);
@@ -154,11 +162,64 @@ export class Room {
 
   async getWorldSnapshot(seed) {
     const saved = await this.ctx.storage.get("world");
-    if (saved) return saved;
-    const model = globalThis.MoneycraftWorld.createModel({ ...WORLD_DIMENSIONS, seed });
+    if (saved) {
+      if (saved.storageVersion === undefined) {
+        this.validateWorldSnapshot(saved);
+        return saved;
+      }
+      if (saved.storageVersion !== 1 || !globalThis.MoneycraftWorld.isSupportedDimensions(saved.world)
+        || saved.partCount !== Math.ceil(saved.world.width * saved.world.depth * saved.world.height / WORLD_PART_SIZE)) {
+        throw new Error("Stored world metadata is invalid.");
+      }
+      const parts = await Promise.all(Array.from({ length: saved.partCount }, (_, index) =>
+        this.ctx.storage.get(`world-part-${index}`)));
+      const length = saved.world.width * saved.world.depth * saved.world.height;
+      const blocks = [];
+      for (const [index, part] of parts.entries()) {
+        if (!(part instanceof Uint8Array) || part.length !== Math.min(WORLD_PART_SIZE, length - index * WORLD_PART_SIZE)) {
+          throw new Error("Stored world part is missing or invalid.");
+        }
+        blocks.push(...part);
+      }
+      const snapshot = { world: { ...saved.world, blocks }, revision: saved.revision };
+      this.validateWorldSnapshot(snapshot);
+      return snapshot;
+    }
+    const room = await this.ctx.storage.get("room");
+    if (!room || room.worldOptions) throw new Error("Stored room world metadata is missing.");
+    const model = globalThis.MoneycraftWorld.createModel({ ...globalThis.MoneycraftWorld.legacyOptions, seed });
     const snapshot = { world: model.serialize(), revision: 0 };
-    await this.ctx.storage.put("world", snapshot);
+    await this.saveWorldSnapshot(snapshot);
     return snapshot;
+  }
+
+  validateWorldSnapshot(snapshot) {
+    const world = snapshot?.world;
+    if (!globalThis.MoneycraftWorld.isSupportedDimensions(world)
+      || world.version !== globalThis.MoneycraftWorld.formatVersion
+      || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0
+      || !["legacy", "forest-plains"].includes(world.terrain ?? "legacy")
+      || !Array.isArray(world.blocks) || world.blocks.length !== world.width * world.depth * world.height
+      || !world.blocks.every((block) => Number.isInteger(block) && block >= 0 && block <= globalThis.MoneycraftWorld.blocks.length)) {
+      throw new Error("Stored room world is invalid.");
+    }
+  }
+
+  async writeWorldSnapshot(transaction, snapshot, editedIndex = null) {
+    const { blocks, ...metadata } = snapshot.world;
+    const partCount = Math.ceil(blocks.length / WORLD_PART_SIZE);
+    const indices = editedIndex === null ? Array.from({ length: partCount }, (_, index) => index)
+      : [Math.floor(editedIndex / WORLD_PART_SIZE)];
+    for (const index of indices) {
+      await transaction.put(`world-part-${index}`, Uint8Array.from(blocks.slice(index * WORLD_PART_SIZE, (index + 1) * WORLD_PART_SIZE)));
+    }
+    await transaction.put("world", { storageVersion: 1, world: metadata, revision: snapshot.revision, partCount });
+  }
+
+  async saveWorldSnapshot(snapshot, editedIndex = null) {
+    const previous = await this.ctx.storage.get("world");
+    await this.ctx.storage.transaction((transaction) =>
+      this.writeWorldSnapshot(transaction, snapshot, previous?.storageVersion === 1 ? editedIndex : null));
   }
 
   createDisplayName(sockets) {
@@ -227,10 +288,7 @@ export class Room {
       return;
     }
 
-    if (!packet || packet.v !== PROTOCOL_VERSION
-      || !((packet.type === "player-state" && isPlayerStatePayload(packet.payload))
-        || (packet.type === "block-edit" && isBlockEditPayload(packet.payload))
-        || (packet.type === "world-request" && packet.payload === null))) {
+    if (!packet || packet.v !== PROTOCOL_VERSION) {
       this.send(socket, {
         v: PROTOCOL_VERSION,
         type: "error",
@@ -242,6 +300,22 @@ export class Room {
     const player = socket.deserializeAttachment();
     if (!player) {
       socket.close(1008, "Unknown player");
+      return;
+    }
+    let dimensions = player.dimensions;
+    if (!globalThis.MoneycraftWorld.isSupportedDimensions(dimensions)) {
+      const room = await this.ctx.storage.get("room");
+      if (!room) {
+        socket.close(4001, "Room closed");
+        return;
+      }
+      dimensions = (await this.getWorldSnapshot(room.worldSeed)).world;
+      player.dimensions = { width: dimensions.width, depth: dimensions.depth, height: dimensions.height };
+    }
+    if (!((packet.type === "player-state" && isPlayerStatePayload(packet.payload, dimensions))
+      || (packet.type === "block-edit" && isBlockEditPayload(packet.payload, dimensions))
+      || (packet.type === "world-request" && packet.payload === null))) {
+      this.send(socket, { v: PROTOCOL_VERSION, type: "error", payload: { code: "invalid_message" } });
       return;
     }
     const now = Date.now();
@@ -311,7 +385,9 @@ export class Room {
     const room = await this.ctx.storage.get("room");
     if (!room) return reject("room_closed");
     const snapshot = await this.getWorldSnapshot(room.worldSeed);
-    this.worldModel ??= globalThis.MoneycraftWorld.createModel({ ...WORLD_DIMENSIONS, seed: room.worldSeed });
+    this.worldModel ??= globalThis.MoneycraftWorld.createModel({
+      width: snapshot.world.width, depth: snapshot.world.depth, height: snapshot.world.height, seed: room.worldSeed,
+    });
     const model = this.worldModel;
     if (!model.load(snapshot.world)) throw new Error("Stored room world is invalid.");
     if (model.getBlock(edit.x, edit.y, edit.z) !== edit.expectedBlock) return reject("edit_conflict");
@@ -321,7 +397,8 @@ export class Room {
       && edit.y < other.y + 1.7 && edit.y + 1 > other.y)) return reject("player_in_block");
     if (!model.setBlock(edit.x, edit.y, edit.z, edit.block)) throw new Error("Validated edit could not be applied.");
     const revision = snapshot.revision + 1;
-    await this.ctx.storage.put("world", { world: model.serialize(), revision });
+    const editedIndex = (edit.y * snapshot.world.depth + edit.z) * snapshot.world.width + edit.x;
+    await this.saveWorldSnapshot({ world: model.serialize(), revision }, editedIndex);
     this.broadcast({
       v: PROTOCOL_VERSION, type: "block-changed",
       payload: { ...edit, revision, playerId: player.id },

@@ -7,7 +7,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { webcrypto } = require("node:crypto");
 
-function createGame() {
+function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, height: 20 } } = {}) {
   const uploads = [];
   const errors = [];
   const context2d = { fillRect() {}, drawImage() {} };
@@ -64,6 +64,13 @@ function createGame() {
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "world-model.js"), "utf8"), context);
   const worldApi = context.MoneycraftWorld;
+  let originalSave;
+  if (legacySave) {
+    const old = worldApi.createModel({ ...worldApi.legacyOptions, seed: 123 });
+    old.setBlock(38, 16, 38, 9);
+    originalSave = { world: legacySave === "array" ? old.serialize().blocks : old.serialize(), x: 20.5, z: 20.5, yaw: 0 };
+    saved.set("moneycraft-3d-world-v2", JSON.stringify(originalSave));
+  }
   let model;
   context.MoneycraftWorld = {
     ...worldApi, createModel: (options) => { model = worldApi.createModel(options); return model; },
@@ -71,9 +78,9 @@ function createGame() {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "game.js"), "utf8"), context);
   assert.deepEqual(errors, []);
   const emit = (type, detail) => window.dispatchEvent(new CustomEvent(`moneycraft:${type}`, { detail }));
-  const roomWorld = worldApi.createModel({ width: 40, depth: 40, height: 20, seed: 123 }).serialize();
+  const roomWorld = worldApi.createModel({ ...roomOptions, seed: 123 }).serialize();
   roomWorld.blocks.fill(0);
-  for (let i = 0; i < 40 * 40; i += 1) roomWorld.blocks[i] = 3;
+  for (let i = 0; i < roomWorld.width * roomWorld.depth; i += 1) roomWorld.blocks[i] = 3;
   function join(players = []) {
     emit("room-connecting", { code: "ABCD23" });
     emit("room-joined", {
@@ -83,7 +90,7 @@ function createGame() {
   const change = (revision, x, y, z, block = 7, expectedBlock = 0, requestId = `edit-${revision}`) => emit("block-changed", {
     revision, x, y, z, block, expectedBlock, requestId, playerId: "self",
   });
-  return { model, elements, uploads, saved, emit, join, change, roomWorld, window, document, timers,
+  return { get model() { return model; }, worldApi, originalSave, elements, uploads, saved, emit, join, change, roomWorld, window, document, timers,
     frame: () => frame(100), errors };
 }
 
@@ -100,6 +107,46 @@ test("nine materials render previews and only edited chunks are uploaded", () =>
   assert.equal(game.uploads.length, 12);
   game.frame();
   assert.deepEqual(game.errors, []);
+});
+
+test("new solo worlds have a clear plains spawn and legacy saves remain intact", () => {
+  const fresh = createGame();
+  assert.equal(fresh.model.dimensions.width, 64);
+  assert.equal(fresh.model.terrain, "forest-plains");
+  const spawn = fresh.model.spawnCenter;
+  assert.ok(spawn.x < 38);
+  assert.equal(fresh.model.findSurface(spawn.x, spawn.z), 6);
+  const legacy = createGame({ legacySave: true });
+  assert.equal(legacy.model.dimensions.width, 40);
+  assert.deepEqual(legacy.model.serialize(), legacy.originalSave.world);
+  assert.equal(legacy.model.getBlock(38, 16, 38), 9);
+  legacy.elements.get("#reset-world").dispatchEvent(new Event("click"));
+  assert.equal(legacy.model.dimensions.width, 64);
+  assert.equal(legacy.model.terrain, "forest-plains");
+});
+
+test("the oldest array-only solo save still loads as a 40-square world", () => {
+  const game = createGame({ legacySave: "array" });
+  assert.equal(game.model.dimensions.width, 40);
+  assert.equal(game.model.terrain, "legacy");
+  assert.equal(game.model.getBlock(38, 16, 38), 9);
+  assert.deepEqual(Array.from(game.model.serialize().blocks), Array.from(game.originalSave.world));
+  game.join();
+  game.emit("room-left", {});
+  assert.equal(game.model.getBlock(38, 16, 38), 9);
+});
+
+test("switching between old and new rooms updates dimensions and restores the solo buildings", () => {
+  const game = createGame({ legacySave: true, roomOptions: { width: 64, depth: 64, height: 20, terrain: "forest-plains" } });
+  game.join();
+  assert.equal(game.model.dimensions.width, 64);
+  game.uploads.length = 0;
+  game.change(1, 63, 16, 63, 9);
+  assert.equal(game.model.getBlock(63, 16, 63), 9);
+  assert.equal(game.uploads.length, 6);
+  game.emit("room-left", {});
+  assert.equal(game.model.dimensions.width, 40);
+  assert.deepEqual(game.model.serialize(), game.originalSave.world);
 });
 
 test("shared edits never overwrite solo saves and leaving restores the original world", () => {

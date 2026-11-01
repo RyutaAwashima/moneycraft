@@ -59,7 +59,7 @@ function createClient() {
     socket.dispatchEvent(event);
   };
   const welcome = () => message({
-    v: 2, type: "welcome", payload: {
+    v: 3, type: "welcome", payload: {
       roomCode: "ABCD23", player: { id: "self", displayName: "Builder" },
       players: [], maxPlayers: 8, world: { version: 1 }, revision: 0,
     },
@@ -70,9 +70,9 @@ function createClient() {
 
 test("browser protocol and JSON failures close using permitted application codes", () => {
   for (const [packet, expectedCode] of [
-    [{ v: 1, type: "welcome" }, 4002],
-    [{ v: 2, type: "welcome", payload: {} }, 4002],
-    [{ v: 2, type: "player-state", payload: {} }, 4002],
+    [{ v: 2, type: "welcome" }, 4002],
+    [{ v: 3, type: "welcome", payload: {} }, 4002],
+    [{ v: 3, type: "player-state", payload: {} }, 4002],
     ["{invalid", 4007],
   ]) {
     const client = createClient();

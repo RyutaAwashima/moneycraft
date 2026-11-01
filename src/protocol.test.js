@@ -26,7 +26,7 @@ test("player states must be finite and inside world bounds", () => {
   assert.equal(isPlayerStatePayload({ ...valid, y: Number.NaN }), false);
   assert.equal(isPlayerStatePayload({ ...valid, pitch: 2 }), false);
   assert.equal(isPlayerStatePayload(null), false);
-  assert.equal(PROTOCOL_VERSION, 2);
+  assert.equal(PROTOCOL_VERSION, 3);
 });
 
 test("block edits validate identifiers, bounds and compare-and-set operations", () => {
@@ -34,8 +34,20 @@ test("block edits validate identifiers, bounds and compare-and-set operations", 
   assert.equal(isBlockEditPayload(edit), true);
   assert.equal(isBlockEditPayload({ ...edit, block: 0, expectedBlock: 9 }), true);
   for (const invalid of [
-    null, { ...edit, x: 40 }, { ...edit, y: -1 }, { ...edit, z: 1.5 },
+    null, { ...edit, x: 64 }, { ...edit, y: -1 }, { ...edit, z: 1.5 },
     { ...edit, block: 10 }, { ...edit, expectedBlock: 10 }, { ...edit, expectedBlock: 1 },
     { ...edit, block: 0 }, { ...edit, requestId: "" }, { ...edit, requestId: "x".repeat(65) },
   ]) assert.equal(isBlockEditPayload(invalid), false);
+});
+
+test("validation uses the room size, including coordinates beyond the old edge", () => {
+  const state = { x: 63.5, y: 6, z: 63.5, yaw: 0, pitch: 0 };
+  const edit = { requestId: "edge-1", x: 63, y: 8, z: 63, block: 9, expectedBlock: 0 };
+  const legacy = globalThis.MoneycraftWorld.legacyOptions;
+  assert.equal(isPlayerStatePayload(state), true);
+  assert.equal(isBlockEditPayload(edit), true);
+  assert.equal(isPlayerStatePayload(state, legacy), false);
+  assert.equal(isBlockEditPayload(edit, legacy), false);
+  assert.equal(isPlayerStatePayload({ ...state, x: 64.01 }), false);
+  assert.equal(isBlockEditPayload({ ...edit, z: 64 }), false);
 });
