@@ -21,6 +21,8 @@
   let localPlayerId = "";
   let maxPlayers = 8;
   let isRoomOwner = false;
+  let worldReady = false;
+  const PROTOCOL_VERSION = 2;
   const players = new Map();
 
   function setStatus(text, state = "idle") {
@@ -87,23 +89,39 @@
   }
 
   function sendPlayerState(event) {
-    if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
+    if (!worldReady || !activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
     const state = event.detail;
     if (!state || !["x", "y", "z", "yaw", "pitch"].every((key) => Number.isFinite(state[key]))) {
       console.error("Could not send an invalid local player state.");
       return;
     }
     try {
-      activeSocket.send(JSON.stringify({ v: 1, type: "player-state", payload: state }));
+      activeSocket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "player-state", payload: state }));
     } catch (error) {
       console.error("Could not send the local player state.", error);
       activeSocket.close(1011, "Player state delivery failed");
     }
   }
 
+  function sendWorldMessage(type, payload) {
+    if (!worldReady || !activeSocket || activeSocket.readyState !== WebSocket.OPEN) {
+      setStatus("共有ワールドに接続していません。部屋コードで再参加してください。", "error");
+      emitRoomEvent("world-send-failed", payload);
+      return;
+    }
+    try {
+      activeSocket.send(JSON.stringify({ v: PROTOCOL_VERSION, type, payload }));
+    } catch (error) {
+      console.error("Could not send a shared world message.", error);
+      setStatus("建築の変更を送信できませんでした。再参加してください。", "error");
+      activeSocket.close(1011, "World message delivery failed");
+      emitRoomEvent("world-send-failed", payload);
+    }
+  }
+
   function handleRoomMessage(packet, socket) {
     if (socket !== activeSocket) return;
-    if (!packet || packet.v !== 1 || typeof packet.type !== "string") {
+    if (!packet || packet.v !== PROTOCOL_VERSION || typeof packet.type !== "string") {
       setStatus("サーバー応答の形式が正しくありません。", "error");
       socket.close(1002, "Invalid protocol message");
       return;
@@ -113,7 +131,8 @@
       const welcome = packet.payload;
       if (!welcome || welcome.roomCode !== currentRoomCode
         || !welcome.player || typeof welcome.player.id !== "string"
-        || typeof welcome.player.displayName !== "string" || !Array.isArray(welcome.players)) {
+        || typeof welcome.player.displayName !== "string" || !Array.isArray(welcome.players)
+        || !welcome.world || !Number.isSafeInteger(welcome.revision) || welcome.revision < 0) {
         setStatus("部屋の初期状態を読み込めませんでした。", "error");
         socket.close(1002, "Invalid welcome message");
         return;
@@ -126,6 +145,7 @@
       players.set(welcome.player.id, welcome.player);
       updateRoomDetails();
       setStatus(`「${welcome.player.displayName}」として入室しました。`, "connected");
+      worldReady = true;
       emitRoomEvent("room-joined", welcome);
       return;
     }
@@ -163,12 +183,20 @@
       return;
     }
 
+    if (["block-changed", "edit-rejected", "world-snapshot"].includes(packet.type)) {
+      emitRoomEvent(packet.type, packet.payload);
+      return;
+    }
+
     if (packet.type === "error") {
       setStatus(`通信エラー: ${packet.payload?.code || "unknown"}`, "error");
+      emitRoomEvent("room-error", packet.payload);
     }
   }
 
   function connectToRoom(roomCode) {
+    worldReady = false;
+    emitRoomEvent("room-connecting", { code: roomCode });
     if (activeSocket) {
       const previousSocket = activeSocket;
       activeSocket = null;
@@ -186,6 +214,7 @@
     } catch (error) {
       console.error("Could not connect to the multiplayer room.", error);
       setStatus("部屋に接続できません。サーバーURLを確認してください。", "error");
+      emitRoomEvent("room-left", { code: roomCode });
       return;
     }
     activeSocket = socket;
@@ -197,6 +226,7 @@
       }
     });
     socket.addEventListener("message", (event) => {
+      if (socket !== activeSocket) return;
       let packet;
       try {
         packet = JSON.parse(event.data);
@@ -215,6 +245,7 @@
       if (socket !== activeSocket) return;
       const closedRoomCode = currentRoomCode;
       activeSocket = null;
+      worldReady = false;
       clearPlayers();
       let detail;
       let state;
@@ -270,7 +301,7 @@
     setStatus("新しい部屋を作っています…", "connecting");
     try {
       const result = await requestJson("/api/rooms", { method: "POST" });
-      if (result.v !== 1 || typeof result.roomCode !== "string" || typeof result.ownerToken !== "string") {
+      if (result.v !== PROTOCOL_VERSION || typeof result.roomCode !== "string" || typeof result.ownerToken !== "string") {
         throw new Error("部屋作成の応答が正しくありません");
       }
       currentRoomCode = result.roomCode;
@@ -305,6 +336,7 @@
     if (!activeSocket) return;
     const socket = activeSocket;
     activeSocket = null;
+    worldReady = false;
     socket.close(1000, "Player left");
     clearPlayers();
     updateRoomDetails();
@@ -332,6 +364,7 @@
         socket.close(1000, "Room closed by owner");
       }
       currentRoomCode = "";
+      worldReady = false;
       clearPlayers();
       clearOwnerSession();
       roomCodeInput.value = "";
@@ -363,6 +396,13 @@
   leaveButton.addEventListener("click", leaveRoom);
   closeButton.addEventListener("click", closeRoom);
   window.addEventListener("moneycraft:send-player-state", sendPlayerState);
+  window.addEventListener("moneycraft:send-block-edit", (event) => sendWorldMessage("block-edit", event.detail));
+  window.addEventListener("moneycraft:request-world", () => sendWorldMessage("world-request", null));
+  window.addEventListener("moneycraft:world-protocol-error", () => {
+    worldReady = false;
+    setStatus("共有ワールドの通信形式が正しくありません。再参加してください。", "error");
+    activeSocket?.close(1002, "Invalid world message");
+  });
 
   const ownerSession = readOwnerSession();
   if (ownerSession) {

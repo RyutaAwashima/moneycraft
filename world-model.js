@@ -3,11 +3,22 @@
 ((root) => {
   const FORMAT_VERSION = 1;
   const DEFAULT_SEED = 20261015;
+  const blocks = Object.freeze([
+    { id: 1, name: "草ブロック", color: [0.39, 0.65, 0.27] },
+    { id: 2, name: "土ブロック", color: [0.52, 0.32, 0.18] },
+    { id: 3, name: "石ブロック", color: [0.49, 0.53, 0.53] },
+    { id: 4, name: "木材ブロック", color: [0.65, 0.43, 0.23] },
+    { id: 5, name: "葉っぱブロック", color: [0.25, 0.53, 0.29] },
+    { id: 6, name: "板材ブロック", color: [0.73, 0.53, 0.31] },
+    { id: 7, name: "レンガブロック", color: [0.68, 0.32, 0.25] },
+    { id: 8, name: "白い壁ブロック", color: [0.9, 0.88, 0.82] },
+    { id: 9, name: "窓ブロック", color: [0.48, 0.73, 0.83] },
+  ].map((block) => Object.freeze({ ...block, color: Object.freeze(block.color) })));
 
-  function createModel({ width, depth, height, blockCount = 5, seed = DEFAULT_SEED }) {
+  function createModel({ width, depth, height, blockCount = blocks.length, seed = DEFAULT_SEED }) {
     if (![width, depth, height, blockCount].every(Number.isSafeInteger)
-      || width < 1 || depth < 1 || height < 1 || blockCount < 1) {
-      throw new TypeError("World dimensions and block count must be positive integers.");
+      || width < 1 || depth < 1 || height < 1 || blockCount < 1 || blockCount > 255) {
+      throw new TypeError("World dimensions must be positive integers and block count must be between 1 and 255.");
     }
 
     let data = new Uint8Array(width * depth * height);
@@ -140,5 +151,5 @@
     });
   }
 
-  root.MoneycraftWorld = Object.freeze({ createModel, formatVersion: FORMAT_VERSION });
+  root.MoneycraftWorld = Object.freeze({ createModel, blocks, formatVersion: FORMAT_VERSION });
 })(globalThis);

@@ -19,7 +19,7 @@
           <span class="brand-mark" aria-hidden="true">M</span>
           <span>moneycraft</span>
         </a>
-        <div class="topbar-note"><span class="status-dot"></span> ひとりで遊ぶワールド</div>
+        <div class="topbar-note"><span class="status-dot"></span> <span id="world-mode">ひとりで遊ぶワールド</span></div>
       </header>
 
       <section class="intro" aria-labelledby="game-title">
@@ -43,7 +43,7 @@
           <button class="room-button room-join" id="join-room" type="button">参加する</button>
         </div>
         <div class="room-status" id="room-status" role="status" aria-live="polite">部屋を作るか、招待コードを入力して参加できます。</div>
-        <p class="multiplayer-note">マルチプレイ中は他のプレイヤーの位置と向きを表示します。ブロック編集はまだ共有されません。</p>
+        <p class="multiplayer-note">同じ部屋では建築とプレイヤーの位置を共有します。建築は作成者が部屋を閉じるまでサーバーに保存されます。退出後は元のひとり用ワールドに戻ります。</p>
         <div class="room-details" id="room-details" hidden>
           <div class="room-share">
             <span>友だちにこのコードを共有</span>
@@ -102,10 +102,10 @@
         </article>
         <article class="help-item">
           <span class="help-icon" aria-hidden="true">▦</span>
-          <div><h2>ブロックを選ぶ</h2><p>下のスロットをクリック、または <kbd>1</kbd>〜<kbd>5</kbd> キー。<kbd>I</kbd> で座標表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
+          <div><h2>ブロックを選ぶ</h2><p>下のスロットをクリック、または <kbd>1</kbd>〜<kbd>9</kbd> キー。板材・レンガ・白い壁・窓も選べます。窓は不透明のガラス風ブロックです。<kbd>I</kbd> で座標表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
         </article>
       </section>
-      <p class="local-note">ワールドの保存データはこの端末のブラウザー内に保存されます。ほかの人とは共有されません。</p>
+      <p class="local-note">ひとり用ワールドはこのブラウザーに自動保存。共同建築は部屋コードで再参加すると続けられます。部屋を閉じると共有ワールドは削除されます。</p>
       <footer class="site-footer">小さなブロックから、自分だけの世界をつくろう。</footer>
     </main>
   </body>

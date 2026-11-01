@@ -2,9 +2,12 @@ import {
   MAX_CLIENT_MESSAGE_BYTES,
   MAX_PLAYERS_PER_ROOM,
   MAX_PLAYER_STATE_MESSAGES_PER_SECOND,
+  MAX_BLOCK_EDIT_MESSAGES_PER_SECOND,
+  BLOCK_REACH,
   PROTOCOL_VERSION,
   WORLD_DIMENSIONS,
   isPlayerStatePayload,
+  isBlockEditPayload,
 } from "./protocol.js";
 
 const OWNER_TOKEN_HEADER = "x-room-owner-token";
@@ -52,6 +55,10 @@ export class Room {
   }
 
   async fetch(request) {
+    return this.ctx.blockConcurrencyWhile(() => this.route(request));
+  }
+
+  async route(request) {
     const url = new URL(request.url);
     if (url.pathname === "/internal/create" && request.method === "POST") {
       return this.createRoom(request);
@@ -78,6 +85,7 @@ export class Room {
       ownerTokenHash: toHex(await digestToken(ownerToken)),
       worldSeed: worldSeed >>> 0,
     });
+    await this.getWorldSnapshot(worldSeed);
     return jsonResponse({ ok: true }, 201);
   }
 
@@ -108,6 +116,7 @@ export class Room {
     if (currentSockets.length >= MAX_PLAYERS_PER_ROOM) {
       return jsonResponse({ error: "room_full" }, 409);
     }
+    const snapshot = await this.getWorldSnapshot(room.worldSeed);
 
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -118,6 +127,8 @@ export class Room {
       state: null,
       messageWindowStart: Date.now(),
       messageCount: 0,
+      editCount: 0,
+      snapshotCount: 0,
     };
     server.serializeAttachment(player);
     this.ctx.acceptWebSocket(server);
@@ -128,11 +139,8 @@ export class Room {
         roomCode: new URL(request.url).searchParams.get("code"),
         player: { id: player.id, displayName: player.displayName },
         players: this.listPlayers(currentSockets),
-        world: {
-          version: 1,
-          ...WORLD_DIMENSIONS,
-          seed: room.worldSeed,
-        },
+        world: snapshot.world,
+        revision: snapshot.revision,
         maxPlayers: MAX_PLAYERS_PER_ROOM,
       },
     });
@@ -142,6 +150,15 @@ export class Room {
       payload: { id: player.id, displayName: player.displayName },
     }, server);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async getWorldSnapshot(seed) {
+    const saved = await this.ctx.storage.get("world");
+    if (saved) return saved;
+    const model = globalThis.MoneycraftWorld.createModel({ ...WORLD_DIMENSIONS, seed });
+    const snapshot = { world: model.serialize(), revision: 0 };
+    await this.ctx.storage.put("world", snapshot);
+    return snapshot;
   }
 
   createDisplayName(sockets) {
@@ -185,7 +202,18 @@ export class Room {
     }
   }
 
-  webSocketMessage(socket, message) {
+  async webSocketMessage(socket, message) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      try {
+        await this.handleMessage(socket, message);
+      } catch (error) {
+        console.error("Could not process or persist a room message.", error);
+        socket.close(1011, "Room storage or message processing failed");
+      }
+    });
+  }
+
+  async handleMessage(socket, message) {
     if (typeof message !== "string" || new TextEncoder().encode(message).byteLength > MAX_CLIENT_MESSAGE_BYTES) {
       socket.close(1009, "Message too large");
       return;
@@ -199,8 +227,10 @@ export class Room {
       return;
     }
 
-    if (!packet || packet.v !== PROTOCOL_VERSION || packet.type !== "player-state"
-      || !isPlayerStatePayload(packet.payload)) {
+    if (!packet || packet.v !== PROTOCOL_VERSION
+      || !((packet.type === "player-state" && isPlayerStatePayload(packet.payload))
+        || (packet.type === "block-edit" && isBlockEditPayload(packet.payload))
+        || (packet.type === "world-request" && packet.payload === null))) {
       this.send(socket, {
         v: PROTOCOL_VERSION,
         type: "error",
@@ -210,12 +240,43 @@ export class Room {
     }
 
     const player = socket.deserializeAttachment();
+    if (!player) {
+      socket.close(1008, "Unknown player");
+      return;
+    }
     const now = Date.now();
     if (now - player.messageWindowStart >= 1000) {
       player.messageWindowStart = now;
       player.messageCount = 0;
+      player.editCount = 0;
+      player.snapshotCount = 0;
+    }
+    if (packet.type === "world-request") {
+      player.snapshotCount = (player.snapshotCount || 0) + 1;
+      socket.serializeAttachment(player);
+      if (player.snapshotCount > 2) {
+        this.send(socket, { v: PROTOCOL_VERSION, type: "error", payload: { code: "rate_limited" } });
+        return;
+      }
+      const room = await this.ctx.storage.get("room");
+      if (!room) {
+        socket.close(4001, "Room closed");
+        return;
+      }
+      this.send(socket, {
+        v: PROTOCOL_VERSION, type: "world-snapshot",
+        payload: await this.getWorldSnapshot(room.worldSeed),
+      });
+      return;
+    }
+    if (packet.type === "block-edit") {
+      player.editCount = (player.editCount || 0) + 1;
+      socket.serializeAttachment(player);
+      await this.editBlock(socket, player, packet.payload);
+      return;
     }
     player.messageCount += 1;
+    socket.serializeAttachment(player);
     if (player.messageCount > MAX_PLAYER_STATE_MESSAGES_PER_SECOND) {
       this.send(socket, {
         v: PROTOCOL_VERSION,
@@ -236,6 +297,35 @@ export class Room {
         state: player.state,
       },
     }, socket);
+  }
+
+  async editBlock(socket, player, edit) {
+    const reject = (code) => this.send(socket, {
+      v: PROTOCOL_VERSION, type: "edit-rejected",
+      payload: { requestId: edit.requestId, code },
+    });
+    if (player.editCount > MAX_BLOCK_EDIT_MESSAGES_PER_SECOND) return reject("rate_limited");
+    const state = player.state;
+    if (!state || Math.hypot(edit.x + 0.5 - state.x, edit.y + 0.5 - (state.y + 1.7 * 0.88),
+      edit.z + 0.5 - state.z) > BLOCK_REACH + Math.sqrt(3) / 2) return reject("out_of_reach");
+    const room = await this.ctx.storage.get("room");
+    if (!room) return reject("room_closed");
+    const snapshot = await this.getWorldSnapshot(room.worldSeed);
+    this.worldModel ??= globalThis.MoneycraftWorld.createModel({ ...WORLD_DIMENSIONS, seed: room.worldSeed });
+    const model = this.worldModel;
+    if (!model.load(snapshot.world)) throw new Error("Stored room world is invalid.");
+    if (model.getBlock(edit.x, edit.y, edit.z) !== edit.expectedBlock) return reject("edit_conflict");
+    if (edit.block !== 0 && this.listPlayers().some(({ state: other }) => other
+      && edit.x < other.x + 0.28 && edit.x + 1 > other.x - 0.28
+      && edit.z < other.z + 0.28 && edit.z + 1 > other.z - 0.28
+      && edit.y < other.y + 1.7 && edit.y + 1 > other.y)) return reject("player_in_block");
+    if (!model.setBlock(edit.x, edit.y, edit.z, edit.block)) throw new Error("Validated edit could not be applied.");
+    const revision = snapshot.revision + 1;
+    await this.ctx.storage.put("world", { world: model.serialize(), revision });
+    this.broadcast({
+      v: PROTOCOL_VERSION, type: "block-changed",
+      payload: { ...edit, revision, playerId: player.id },
+    });
   }
 
   webSocketClose(socket) {

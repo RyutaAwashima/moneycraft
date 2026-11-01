@@ -26,7 +26,7 @@ test("block access enforces coordinates and block identifiers", () => {
   assert.equal(world.setBlock(2, 3, 4, 5), true);
   assert.equal(world.getBlock(2, 3, 4), 5);
   assert.equal(world.setBlock(-1, 3, 4, 1), false);
-  assert.equal(world.setBlock(2, 3, 4, 6), false);
+  assert.equal(world.setBlock(2, 3, 4, 10), false);
   assert.equal(world.getBlock(2, 3, 4), 5);
 });
 
@@ -50,4 +50,15 @@ test("legacy block arrays are accepted for local-save migration", () => {
   assert.equal(restored.load(blocks), true);
   assert.deepEqual(restored.serialize().blocks, blocks);
   assert.equal(restored.serialize().seed, 9);
+});
+
+test("all nine materials round-trip while old five-block saves remain compatible", () => {
+  const old = createModel({ width: 12, depth: 12, height: 12, blockCount: 5, seed: 7 });
+  const world = createWorld();
+  assert.equal(world.load(old.serialize()), true);
+  for (let id = 1; id <= 9; id += 1) assert.equal(world.setBlock(id, 9, 1, id), true);
+  const restored = createWorld();
+  assert.equal(restored.load(world.serialize()), true);
+  assert.deepEqual(restored.serialize(), world.serialize());
+  assert.throws(() => createModel({ width: 1, depth: 1, height: 1, blockCount: 256 }), /positive integers/);
 });

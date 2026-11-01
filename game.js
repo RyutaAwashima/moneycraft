@@ -30,13 +30,7 @@
   const REACH = 6;
   const GRAVITY = 19;
   const JUMP_SPEED = 7.8;
-  const blocks = [
-    { id: 1, name: "草ブロック", color: [0.39, 0.65, 0.27] },
-    { id: 2, name: "土ブロック", color: [0.52, 0.32, 0.18] },
-    { id: 3, name: "石ブロック", color: [0.49, 0.53, 0.53] },
-    { id: 4, name: "木材ブロック", color: [0.65, 0.43, 0.23] },
-    { id: 5, name: "葉っぱブロック", color: [0.25, 0.53, 0.29] },
-  ];
+  const blocks = globalThis.MoneycraftWorld.blocks;
   const worldModel = globalThis.MoneycraftWorld.createModel({
     width: WORLD_WIDTH,
     depth: WORLD_DEPTH,
@@ -64,18 +58,177 @@
   const remotePlayerLabelElements = new Map();
   let selectedBlock = 1;
   let program;
-  let positionBuffer;
-  let colorBuffer;
   let avatarPositionBuffer;
   let avatarColorBuffer;
   let positionAttribute;
   let colorAttribute;
-  let vertexCount = 0;
+  let uvAttribute;
+  let textureAtlas;
+  let atlasCanvas;
+  const CHUNK_SIZE = 8;
+  const chunkMeshes = new Map();
   let lastTime = 0;
   let saveTimer = 0;
   let debugTimer = 0;
   let remoteRenderTime = 0;
   let pointerLockPending = false;
+  let roomMode = "solo";
+  let soloSnapshot = null;
+  let worldRevision = 0;
+  let awaitingSnapshot = false;
+  let snapshotTimer = 0;
+  const pendingEdits = new Map();
+
+  function emitWorldEvent(type, detail) {
+    window.dispatchEvent(new CustomEvent(`moneycraft:${type}`, { detail }));
+  }
+
+  function sendCurrentPlayerState() {
+    emitWorldEvent("send-player-state", {
+      x: player.x, y: player.y, z: player.z, yaw: player.yaw, pitch: player.pitch,
+    });
+  }
+
+  function clearPendingEdits() {
+    window.clearTimeout(snapshotTimer);
+    for (const timer of pendingEdits.values()) window.clearTimeout(timer);
+    pendingEdits.clear();
+  }
+
+  function enterRoom() {
+    if (roomMode === "solo") {
+      saveGame();
+      soloSnapshot = { world: worldModel.serialize(), player: { ...player } };
+    }
+    roomMode = "connecting";
+    awaitingSnapshot = false;
+    clearPendingEdits();
+    clearRemotePlayers();
+    resetButton.disabled = true;
+    saveState.textContent = "共有ワールドを読み込み中";
+    document.querySelector("#world-mode").textContent = "共有ワールドに接続中";
+  }
+
+  function leaveSharedWorld() {
+    clearRemotePlayers();
+    clearPendingEdits();
+    awaitingSnapshot = false;
+    if (!soloSnapshot) return;
+    if (!worldModel.load(soloSnapshot.world)) {
+      throw new Error("Could not restore the solo world.");
+    }
+    player = { ...soloSnapshot.player };
+    soloSnapshot = null;
+    roomMode = "solo";
+    resetButton.disabled = false;
+    rebuildWorldMesh();
+    saveState.textContent = "このブラウザーに自動保存";
+    message.textContent = "元のひとり用ワールドに戻りました";
+    document.querySelector("#world-mode").textContent = "ひとりで遊ぶワールド";
+  }
+
+  function invalidWorldMessage() {
+    console.error("Received an invalid shared world message.");
+    emitWorldEvent("world-protocol-error", {});
+  }
+
+  function requestWorldSnapshot() {
+    if (roomMode !== "shared" || awaitingSnapshot) return;
+    awaitingSnapshot = true;
+    clearPendingEdits();
+    saveState.textContent = "共有ワールドを再同期中";
+    snapshotTimer = window.setTimeout(() => {
+      message.textContent = "共有ワールドを再同期できませんでした。再参加してください";
+      emitWorldEvent("world-protocol-error", {});
+    }, 5000);
+    emitWorldEvent("request-world", null);
+  }
+
+  function receiveWorldSnapshot(event) {
+    const snapshot = event.detail;
+    if (roomMode === "solo") return;
+    if (!snapshot || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0
+      || !worldModel.load(snapshot.world)) {
+      invalidWorldMessage();
+      return false;
+    }
+    worldRevision = snapshot.revision;
+    awaitingSnapshot = false;
+    clearPendingEdits();
+    rebuildWorldMesh();
+    if (collidesAt(player.x, player.y, player.z)) moveToSafeSpawn();
+    saveState.textContent = "共有ワールドをサーバーに保存";
+    return true;
+  }
+
+  function receiveBlockChanged(event) {
+    if (roomMode !== "shared") return;
+    const edit = event.detail;
+    if (!edit || !Number.isSafeInteger(edit.revision) || edit.revision < 1
+      || typeof edit.requestId !== "string" || typeof edit.playerId !== "string"
+      || !inBounds(edit.x, edit.y, edit.z) || !Number.isInteger(edit.block)
+      || edit.block < 0 || edit.block > blocks.length) {
+      invalidWorldMessage();
+      return;
+    }
+    if (awaitingSnapshot || edit.revision <= worldRevision) return;
+    if (edit.revision !== worldRevision + 1 || getBlock(edit.x, edit.y, edit.z) !== edit.expectedBlock) {
+      requestWorldSnapshot();
+      return;
+    }
+    setBlock(edit.x, edit.y, edit.z, edit.block);
+    worldRevision = edit.revision;
+    updateWorldMesh(edit.x, edit.y, edit.z);
+    if (pendingEdits.has(edit.requestId)) {
+      window.clearTimeout(pendingEdits.get(edit.requestId));
+      pendingEdits.delete(edit.requestId);
+      message.textContent = edit.block === 0 ? "ブロックを掘りました" : `${blocks[edit.block - 1].name}を置きました`;
+    }
+    if (collidesAt(player.x, player.y, player.z)) moveToSafeSpawn();
+    saveState.textContent = "共有ワールドをサーバーに保存";
+  }
+
+  function receiveEditRejected(event) {
+    const rejection = event.detail;
+    if (roomMode !== "shared" || !rejection || typeof rejection.requestId !== "string"
+      || typeof rejection.code !== "string") {
+      invalidWorldMessage();
+      return;
+    }
+    window.clearTimeout(pendingEdits.get(rejection.requestId));
+    pendingEdits.delete(rejection.requestId);
+    const reasons = {
+      rate_limited: "操作が速すぎます。少し待ってください",
+      out_of_reach: "置きたい・掘りたい場所に近づいてください",
+      edit_conflict: "ほかの人が先に変更しました。再同期します",
+      player_in_block: "プレイヤーがいる場所には置けません",
+      room_closed: "部屋が閉じられました",
+    };
+    message.textContent = reasons[rejection.code] || `建築の変更が拒否されました: ${rejection.code}`;
+    if (rejection.code === "edit_conflict") requestWorldSnapshot();
+  }
+
+  function changeBlock(x, y, z, block) {
+    if (roomMode === "connecting" || awaitingSnapshot) {
+      message.textContent = "共有ワールドの読み込み完了を待ってください";
+      return;
+    }
+    if (roomMode === "shared") {
+      const requestId = crypto.randomUUID();
+      pendingEdits.set(requestId, window.setTimeout(() => {
+        message.textContent = "建築の応答を確認できません。再同期します";
+        requestWorldSnapshot();
+      }, 5000));
+      message.textContent = "建築の変更を送信中";
+      sendCurrentPlayerState();
+      emitWorldEvent("send-block-edit", { requestId, x, y, z, block, expectedBlock: getBlock(x, y, z) });
+      return;
+    }
+    setBlock(x, y, z, block);
+    updateWorldMesh(x, y, z);
+    saveGame();
+    message.textContent = block === 0 ? "ブロックを掘りました" : `${blocks[block - 1].name}を置きました`;
+  }
 
   function inBounds(x, y, z) {
     return worldModel.inBounds(x, y, z);
@@ -106,18 +259,24 @@
     const vertexShader = compileShader(gl.VERTEX_SHADER, `
       attribute vec3 aPosition;
       attribute vec3 aColor;
+      attribute vec2 aUv;
       uniform mat4 uViewProjection;
       varying vec3 vColor;
+      varying vec2 vUv;
       void main() {
         gl_Position = uViewProjection * vec4(aPosition, 1.0);
         vColor = aColor;
+        vUv = aUv;
       }
     `);
     const fragmentShader = compileShader(gl.FRAGMENT_SHADER, `
       precision mediump float;
       varying vec3 vColor;
+      varying vec2 vUv;
+      uniform sampler2D uTexture;
+      uniform bool uTextured;
       void main() {
-        gl_FragColor = vec4(vColor, 1.0);
+        gl_FragColor = vec4(vColor, 1.0) * (uTextured ? texture2D(uTexture, vUv) : vec4(1.0));
       }
     `);
     program = gl.createProgram();
@@ -130,14 +289,12 @@
     }
     gl.deleteShader(vertexShader);
     gl.deleteShader(fragmentShader);
-    positionBuffer = gl.createBuffer();
-    colorBuffer = gl.createBuffer();
-    if (!positionBuffer || !colorBuffer) throw new Error("Could not create WebGL buffers.");
     gl.useProgram(program);
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     positionAttribute = gl.getAttribLocation(program, "aPosition");
     colorAttribute = gl.getAttribLocation(program, "aColor");
+    uvAttribute = gl.getAttribLocation(program, "aUv");
     gl.enableVertexAttribArray(positionAttribute);
     gl.enableVertexAttribArray(colorAttribute);
     avatarPositionBuffer = gl.createBuffer();
@@ -145,6 +302,58 @@
     if (!avatarPositionBuffer || !avatarColorBuffer) {
       throw new Error("Could not create multiplayer avatar buffers.");
     }
+    initializeTextures();
+  }
+
+  function initializeTextures() {
+    atlasCanvas = document.createElement("canvas");
+    atlasCanvas.width = 256;
+    atlasCanvas.height = 16;
+    const context = atlasCanvas.getContext("2d");
+    if (!context) throw new Error("Could not create block texture canvas.");
+    for (let tile = 0; tile < 11; tile += 1) {
+      const id = tile < 9 ? tile + 1 : tile === 9 ? 2 : 4;
+      const base = blocks[id - 1].color.map((channel) => Math.round(channel * 255));
+      for (let y = 0; y < 16; y += 1) {
+        for (let x = 0; x < 16; x += 1) {
+          const noise = ((x * 37 + y * 67 + tile * 13 + x * y * 11) % 23) - 11;
+          let color = base.map((channel) => channel + noise);
+          if (id === 3 && (y === 0 || x === 0)) color = [104, 112, 112];
+          if (id === 4) {
+            color = base.map((channel) => channel + noise + (x % 4 === 0 ? -35 : 0));
+          }
+          if (id === 5 && (x + y * 3) % 7 < 2) color = [47, 110, 56];
+          if (id === 6 && (y % 4 === 0 || (x === (Math.floor(y / 4) % 2) * 8 && y % 4 !== 0))) {
+            color = [119, 79, 43];
+          }
+          if (id === 7 && (y % 4 === 0 || (x + (Math.floor(y / 4) % 2) * 4) % 8 === 0)) {
+            color = [200, 185, 161];
+          }
+          if (id === 8) color = base.map((channel) => channel + noise * 0.25);
+          if (id === 9) {
+            if (x === 0 || y === 0 || x === 15 || y === 15 || x === 7 || y === 7) color = [227, 223, 206];
+            else if ((x + y) % 14 < 2) color = [194, 227, 236];
+          }
+          if (tile === 9 && y < 3 + x % 2) color = blocks[0].color.map((channel) => channel * 255 + noise);
+          if (tile === 10) {
+            const ring = Math.floor(Math.hypot(x - 7.5, y - 7.5)) % 3 === 0 ? -28 : 12;
+            color = base.map((channel) => channel + ring + noise * 0.3);
+          }
+          context.fillStyle = `rgb(${color.map((channel) => Math.max(0, Math.min(255, Math.round(channel)))).join(",")})`;
+          context.fillRect(tile * 16 + x, y, 1, 1);
+        }
+      }
+    }
+    textureAtlas = gl.createTexture();
+    if (!textureAtlas) throw new Error("Could not create block texture atlas.");
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, textureAtlas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlasCanvas);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.uniform1i(gl.getUniformLocation(program, "uTexture"), 0);
   }
 
   function moveToSafeSpawn() {
@@ -158,6 +367,9 @@
     for (const candidate of candidates) {
       const y = worldModel.findSurface(candidate.x, candidate.z);
       if (collidesAt(candidate.x, y, candidate.z)) continue;
+      if ([...remotePlayers.values()].some(({ target }) => target
+        && Math.hypot(candidate.x - target.x, candidate.z - target.z) < 1
+        && y < target.y + PLAYER_HEIGHT && y + PLAYER_HEIGHT > target.y)) continue;
       player.x = candidate.x;
       player.y = y;
       player.z = candidate.z;
@@ -188,6 +400,7 @@
   }
 
   function saveGame() {
+    if (roomMode !== "solo") return;
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         world: worldModel.serialize(),
@@ -203,35 +416,64 @@
   }
 
   function rebuildWorldMesh() {
+    for (let y = 0; y < WORLD_HEIGHT; y += CHUNK_SIZE) {
+      for (let z = 0; z < WORLD_DEPTH; z += CHUNK_SIZE) {
+        for (let x = 0; x < WORLD_WIDTH; x += CHUNK_SIZE) rebuildChunk(x, y, z);
+      }
+    }
+  }
+
+  function updateWorldMesh(x, y, z) {
+    const chunks = new Map();
+    for (const offset of [[0, 0, 0], ...faces.map((face) => face.neighbor)]) {
+      const cell = [x + offset[0], y + offset[1], z + offset[2]];
+      if (!inBounds(...cell)) continue;
+      const start = cell.map((value) => Math.floor(value / CHUNK_SIZE) * CHUNK_SIZE);
+      chunks.set(start.join(","), start);
+    }
+    for (const start of chunks.values()) rebuildChunk(...start);
+  }
+
+  function rebuildChunk(startX, startY, startZ) {
     const positions = [];
     const colors = [];
+    const uvs = [];
     const { width, depth, height } = worldModel.dimensions;
-    for (let y = 0; y < height; y += 1) {
-      for (let z = 0; z < depth; z += 1) {
-        for (let x = 0; x < width; x += 1) {
+    for (let y = startY; y < Math.min(height, startY + CHUNK_SIZE); y += 1) {
+      for (let z = startZ; z < Math.min(depth, startZ + CHUNK_SIZE); z += 1) {
+        for (let x = startX; x < Math.min(width, startX + CHUNK_SIZE); x += 1) {
           const block = getBlock(x, y, z);
           if (block === 0) continue;
           for (const face of faces) {
             if (getBlock(x + face.neighbor[0], y + face.neighbor[1], z + face.neighbor[2]) !== 0) continue;
-            const baseColor = blocks[block - 1].color;
-            const faceColor = baseColor.map((channel) => channel * face.light);
+            let tile = block - 1;
+            if (block === 1) tile = face.normal[1] === 1 ? 0 : face.normal[1] === -1 ? 1 : 9;
+            if (block === 4 && face.normal[1] !== 0) tile = 10;
+            const faceUv = [[0, 1], [0, 0], [1, 0], [1, 1]];
             const points = face.corners;
             for (const cornerIndex of [0, 1, 2, 0, 2, 3]) {
               const corner = points[cornerIndex];
               positions.push(x + corner[0], y + corner[1], z + corner[2]);
-              colors.push(faceColor[0], faceColor[1], faceColor[2]);
+              colors.push(face.light, face.light, face.light);
+              uvs.push((tile * 16 + 0.5 + faceUv[cornerIndex][0] * 15) / 256,
+                (0.5 + faceUv[cornerIndex][1] * 15) / 16);
             }
           }
         }
       }
     }
-    vertexCount = positions.length / 3;
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
-    gl.vertexAttribPointer(gl.getAttribLocation(program, "aPosition"), 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
-    gl.vertexAttribPointer(gl.getAttribLocation(program, "aColor"), 3, gl.FLOAT, false, 0, 0);
+    const key = [startX, startY, startZ].join(",");
+    let mesh = chunkMeshes.get(key);
+    if (!mesh) {
+      mesh = { position: gl.createBuffer(), color: gl.createBuffer(), uv: gl.createBuffer(), count: 0 };
+      if (!mesh.position || !mesh.color || !mesh.uv) throw new Error("Could not create chunk buffers.");
+      chunkMeshes.set(key, mesh);
+    }
+    mesh.count = positions.length / 3;
+    for (const [buffer, data] of [[mesh.position, positions], [mesh.color, colors], [mesh.uv, uvs]]) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+    }
   }
 
   function buildHotbar() {
@@ -242,7 +484,18 @@
       button.setAttribute("aria-label", `${index + 1}: ${block.name}`);
       button.setAttribute("aria-pressed", String(selectedBlock === block.id));
       button.title = `${index + 1}: ${block.name}`;
-      button.innerHTML = `<span class="slot-number">${index + 1}</span><span class="block-swatch" style="background:rgb(${blocks[index].color.map((value) => Math.round(value * 255)).join(",")})" aria-hidden="true"></span>`;
+      const number = document.createElement("span");
+      number.className = "slot-number";
+      number.textContent = String(index + 1);
+      const swatch = document.createElement("canvas");
+      swatch.className = "block-swatch";
+      swatch.width = 16;
+      swatch.height = 16;
+      swatch.setAttribute("aria-hidden", "true");
+      const context = swatch.getContext("2d");
+      if (!context) throw new Error("Could not create a block preview.");
+      context.drawImage(atlasCanvas, index * 16, 0, 16, 16, 0, 0, 16, 16);
+      button.append(number, swatch);
       button.addEventListener("click", () => selectBlock(block.id));
       hotbar.append(button);
     }
@@ -339,11 +592,21 @@
       lookAt(eye, viewDirection()),
     );
     gl.uniformMatrix4fv(gl.getUniformLocation(program, "uViewProjection"), false, viewProjection);
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-    gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
-    gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
-    gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+    gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 1);
+    gl.enableVertexAttribArray(uvAttribute);
+    for (const mesh of chunkMeshes.values()) {
+      if (!mesh.count) continue;
+      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.position);
+      gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.color);
+      gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.uv);
+      gl.vertexAttribPointer(uvAttribute, 2, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.TRIANGLES, 0, mesh.count);
+    }
+    gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 0);
+    gl.disableVertexAttribArray(uvAttribute);
+    gl.vertexAttrib2f(uvAttribute, 0, 0);
     renderRemotePlayers(viewProjection);
   }
 
@@ -407,10 +670,19 @@
   function receiveRoomJoined(event) {
     const room = event.detail;
     if (!room || typeof room.player?.id !== "string" || !Array.isArray(room.players)) return;
+    if (roomMode === "solo") enterRoom();
+    if (!receiveWorldSnapshot({ detail: room })) return;
+    roomMode = "shared";
+    document.querySelector("#world-mode").textContent = `共同建築 · ${room.roomCode}`;
     clearRemotePlayers();
     for (const otherPlayer of room.players) {
       if (otherPlayer.id !== room.player.id) addOrUpdateRemotePlayer(otherPlayer);
     }
+    moveToSafeSpawn();
+    player.yaw = 0;
+    player.pitch = -0.12;
+    sendCurrentPlayerState();
+    message.textContent = "共有ワールドで建築できます";
   }
 
   function receivePlayerJoined(event) {
@@ -509,6 +781,13 @@
       remote.state.z += (remote.target.z - remote.state.z) * interpolation;
       remote.state.yaw += yawDelta * interpolation;
       remote.state.pitch += (remote.target.pitch - remote.state.pitch) * interpolation;
+
+      const eyeY = player.y + PLAYER_HEIGHT * 0.88;
+      if (Math.hypot(remote.state.x - player.x, remote.state.z - player.z) < 0.55
+        && eyeY > remote.state.y && eyeY < remote.state.y + PLAYER_HEIGHT) {
+        getRemotePlayerLabel(remote.id).hidden = true;
+        continue;
+      }
 
       const color = remotePlayerColor(remote.id);
       appendAvatarBox(positions, colors, remote, [0, 0.98, 0], [0.23, 0.34, 0.16], color);
@@ -665,11 +944,7 @@
       message.textContent = "照準を近くのブロックに合わせてね";
       return;
     }
-    const minedBlock = getBlock(target.x, target.y, target.z);
-    setBlock(target.x, target.y, target.z, 0);
-    rebuildWorldMesh();
-    saveGame();
-    message.textContent = `${blocks[minedBlock - 1].name}を掘りました`;
+    changeBlock(target.x, target.y, target.z, 0);
   }
 
   function placeBlock() {
@@ -688,18 +963,28 @@
       message.textContent = "そこにはブロックを置けません";
       return;
     }
-    setBlock(x, y, z, selectedBlock);
-    rebuildWorldMesh();
-    saveGame();
-    message.textContent = `${blocks[selectedBlock - 1].name}を置きました`;
+    changeBlock(x, y, z, selectedBlock);
   }
 
   window.addEventListener("moneycraft:room-joined", receiveRoomJoined);
   window.addEventListener("moneycraft:player-joined", receivePlayerJoined);
   window.addEventListener("moneycraft:player-state", receivePlayerState);
   window.addEventListener("moneycraft:player-left", (event) => removeRemotePlayer(event.detail?.id));
-  window.addEventListener("moneycraft:room-left", clearRemotePlayers);
-  window.addEventListener("moneycraft:room-closed", clearRemotePlayers);
+  window.addEventListener("moneycraft:room-connecting", enterRoom);
+  window.addEventListener("moneycraft:room-left", leaveSharedWorld);
+  window.addEventListener("moneycraft:room-closed", leaveSharedWorld);
+  window.addEventListener("moneycraft:block-changed", receiveBlockChanged);
+  window.addEventListener("moneycraft:world-snapshot", receiveWorldSnapshot);
+  window.addEventListener("moneycraft:edit-rejected", receiveEditRejected);
+  window.addEventListener("moneycraft:world-send-failed", () => {
+    clearPendingEdits();
+    message.textContent = "共有ワールドの通信に失敗しました。再参加してください";
+  });
+  window.addEventListener("moneycraft:room-error", () => {
+    if (awaitingSnapshot) {
+      message.textContent = "再同期に失敗しました。部屋コードで再参加してください";
+    }
+  });
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
   canvas.addEventListener("click", (event) => {
@@ -826,6 +1111,7 @@
     player.pitch = Math.max(-1.48, Math.min(1.48, player.pitch - event.movementY * 0.0025));
   });
   window.addEventListener("keydown", (event) => {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyI" && !event.repeat) {
       debugIndicator.hidden = !debugIndicator.hidden;
@@ -841,6 +1127,7 @@
   window.addEventListener("keyup", (event) => keys.delete(event.code));
   window.addEventListener("blur", () => keys.clear());
   resetButton.addEventListener("click", () => {
+    if (roomMode !== "solo") return;
     if (!window.confirm("ワールドを最初の状態に戻しますか？")) return;
     worldModel.reset(Date.now());
     moveToSafeSpawn();
@@ -874,17 +1161,7 @@
     loadGame();
     buildHotbar();
     rebuildWorldMesh();
-    window.setInterval(() => {
-      window.dispatchEvent(new CustomEvent("moneycraft:send-player-state", {
-        detail: {
-          x: player.x,
-          y: player.y,
-          z: player.z,
-          yaw: player.yaw,
-          pitch: player.pitch,
-        },
-      }));
-    }, PLAYER_STATE_INTERVAL_MS);
+    window.setInterval(sendCurrentPlayerState, PLAYER_STATE_INTERVAL_MS);
     window.requestAnimationFrame(frame);
   } catch (error) {
     console.error("The 3D world could not be initialized.", error);

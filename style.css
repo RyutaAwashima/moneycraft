@@ -538,6 +538,7 @@ h1 {
 
 .game-footer {
   display: flex;
+  flex-wrap: wrap;
   min-height: 74px;
   align-items: center;
   justify-content: space-between;
@@ -548,6 +549,8 @@ h1 {
 
 .hotbar {
   display: flex;
+  flex: 1 1 280px;
+  flex-wrap: wrap;
   gap: 7px;
 }
 
@@ -555,6 +558,7 @@ h1 {
   position: relative;
   display: grid;
   width: 48px;
+  flex-shrink: 0;
   height: 48px;
   place-items: center;
   padding: 4px;
@@ -576,6 +580,7 @@ h1 {
 }
 
 .block-swatch {
+  image-rendering: pixelated;
   width: 25px;
   height: 25px;
   border: 2px solid rgba(31, 54, 40, 0.16);
