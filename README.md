@@ -79,8 +79,8 @@ server processing order and compare the expected block before applying.
 Clients request a fresh snapshot on revision gaps, conflicts, or edit timeouts.
 Only edited chunks and their affected neighbors are rebuilt.
 
-The sixteen-player Worker was deployed on 2026-11-02, with the matching
-client being published. Reload participating browsers after publication;
+The sixteen-player Worker and matching client were published on 2026-11-02.
+Reload participating browsers to receive the updated client;
 the protocol version and existing worlds remain unchanged.
 Server tests cover sixteen admissions, rejection of a
 seventeenth, position/edit broadcasts, and replacement after a disconnect.
