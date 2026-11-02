@@ -107,9 +107,12 @@ late-join snapshots, and owner closure. Browser checks used direct gameplay
 events, not a full normal mouse-input session. Before class, verify normal
 movement, aiming, mining, and placement from two actual devices.
 
-The expanded forest/grassland release uses protocol **v3**. Its Worker was
-deployed on 2026-11-01; publish the matching static client and reload browser
-tabs to use it. New rooms use 64-square worlds; existing rooms remain 40-square.
+The expanded forest/grassland release uses protocol **v3** and was published
+to both the Worker and GitHub Pages on 2026-11-01. Reload browser tabs to use
+it. New rooms use 64-square worlds; existing rooms remain 40-square.
+Production checks verified the flat/tree-free grassland, editing at the new
+edge, late-join restoration, and preservation of an existing local 40-square
+save when entering and leaving a new 64-square room.
 
 This implementation requires both the updated Worker
 and client. Deploy the Worker first (`wrangler deploy`), publish the updated
