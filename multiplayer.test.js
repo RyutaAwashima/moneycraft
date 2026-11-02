@@ -67,7 +67,7 @@ function createClient({ href = "https://example.test/moneycraft/", autoJoin = tr
   const welcome = () => message({
     v: 3, type: "welcome", payload: {
       roomCode: "ABCD23", player: { id: "self", displayName: "Builder" },
-      players: [], maxPlayers: 8, world: { version: 1 }, revision: 0,
+      players: [], maxPlayers: 16, world: { version: 1 }, revision: 0,
     },
   });
   const emit = (type, detail) => window.dispatchEvent(new CustomEvent(`moneycraft:${type}`, { detail }));
@@ -84,7 +84,7 @@ test("browser protocol and JSON failures close using permitted application codes
     const client = createClient();
     client.message(packet);
     assert.equal(client.socket.closeCode, expectedCode);
-    assert.equal(client.elements.get("#room-roster-count").textContent, "0 / 8 人");
+    assert.equal(client.elements.get("#room-roster-count").textContent, "0 / 16 人");
   }
 });
 

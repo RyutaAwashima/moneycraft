@@ -70,7 +70,7 @@ The game header shows the current world's size and terrain.
 
 See [ROADMAP.md](./ROADMAP.md) for the selected MVP requirements, proposed
 multiplayer architecture, phases, and completion criteria.
-The multiplayer prototype supports up to eight participants and sends player
+The multiplayer prototype supports up to sixteen participants and sends player
 position and facing direction 10 times per second. Room worlds are generated
 from a common seed and stored in Durable Object storage. Joining or rejoining
 loads the latest full snapshot; mining and placement are persisted before
@@ -78,6 +78,13 @@ being broadcast to everyone, including the editor. Conflicting edits use
 server processing order and compare the expected block before applying.
 Clients request a fresh snapshot on revision gaps, conflicts, or edit timeouts.
 Only edited chunks and their affected neighbors are rebuilt.
+
+The sixteen-player Worker was deployed on 2026-11-02, with the matching
+client being published. Reload participating browsers after publication;
+the protocol version and existing worlds remain unchanged.
+Server tests cover sixteen admissions, rejection of a
+seventeenth, position/edit broadcasts, and replacement after a disconnect.
+Real-device performance with sixteen simultaneous players remains unverified.
 
 Room details include an invitation QR code and a link. Scan the QR with a
 tablet's standard camera to open the game with the room code filled in, then

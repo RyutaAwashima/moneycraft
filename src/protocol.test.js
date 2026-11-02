@@ -11,11 +11,11 @@ import {
   isBlockEditPayload,
 } from "./protocol.js";
 
-test("room codes use a fixed, unambiguous alphabet and capacity is eight", () => {
+test("room codes use a fixed, unambiguous alphabet and capacity is sixteen", () => {
   assert.equal(ROOM_CODE_PATTERN.test("ABCD23"), true);
   assert.equal(ROOM_CODE_PATTERN.test("ABCI23"), false);
   assert.equal(ROOM_CODE_PATTERN.test("ABC1234"), false);
-  assert.equal(MAX_PLAYERS_PER_ROOM, 8);
+  assert.equal(MAX_PLAYERS_PER_ROOM, 16);
 });
 
 test("player states must be finite and inside world bounds", () => {

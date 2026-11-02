@@ -182,11 +182,40 @@ test("welcome includes the latest full world, and old rooms initialize determini
     assert.equal(welcome.revision, 1);
     assert.deepEqual(welcome.world, (await room.getWorldSnapshot(123)).world);
     assert.equal(welcome.roomCode, "ABCD23");
-    while (ctx.sockets.length < 8) addPlayer(ctx, `player-${ctx.sockets.length}`);
+    while (ctx.sockets.length < 16) {
+      const response = await room.fetch(new Request("https://room.internal/connect?code=ABCD23", {
+        headers: { Upgrade: "websocket" },
+      }));
+      assert.equal(response.status, 101);
+      assert.equal(ctx.sockets.at(-1).messages[0].payload.maxPlayers, 16);
+    }
     const full = await room.fetch(new Request("https://room.internal/connect?code=ABCD23", {
       headers: { Upgrade: "websocket" },
     }));
     assert.equal(full.status, 409);
+    assert.equal((await full.json()).error, "room_full");
+    for (const player of ctx.sockets) player.messages.length = 0;
+    for (let tick = 0; tick < 10; tick += 1) {
+      for (const player of ctx.sockets) {
+        await send(room, player, "player-state", socket.deserializeAttachment().state);
+      }
+    }
+    for (const player of ctx.sockets) {
+      assert.equal(player.messages.length, 150);
+      assert.ok(player.messages.every((message) => message.type === "player-state"));
+    }
+    for (const player of ctx.sockets) player.messages.length = 0;
+    await send(room, socket, "block-edit", { ...placement, requestId: "capacity-mine", block: 0, expectedBlock: 7 });
+    for (const player of ctx.sockets) {
+      assert.equal(player.messages.at(-1).type, "block-changed");
+      assert.equal(player.messages.at(-1).payload.revision, 2);
+    }
+    ctx.sockets.at(-1).close(1000);
+    const replacement = await room.fetch(new Request("https://room.internal/connect?code=ABCD23", {
+      headers: { Upgrade: "websocket" },
+    }));
+    assert.equal(replacement.status, 101);
+    assert.equal(ctx.getWebSockets().length, 16);
     const legacy = createContext();
     await legacy.storage.put("room", { worldSeed: 123 });
     const migrated = await new Room(legacy).getWorldSnapshot(123);

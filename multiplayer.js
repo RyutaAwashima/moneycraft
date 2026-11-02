@@ -23,7 +23,7 @@
   let activeSocket = null;
   let currentRoomCode = "";
   let localPlayerId = "";
-  let maxPlayers = 8;
+  let maxPlayers = 16;
   let isRoomOwner = false;
   let worldReady = false;
   let renderedInviteCode = "";

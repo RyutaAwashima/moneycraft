@@ -2,7 +2,7 @@ import "../world-model.js";
 
 export const PROTOCOL_VERSION = 3;
 export const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
-export const MAX_PLAYERS_PER_ROOM = 8;
+export const MAX_PLAYERS_PER_ROOM = 16;
 export const WORLD_DIMENSIONS = globalThis.MoneycraftWorld.defaultOptions;
 export const MAX_CLIENT_MESSAGE_BYTES = 2048;
 export const MAX_PLAYER_STATE_MESSAGES_PER_SECOND = 20;
