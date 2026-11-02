@@ -88,6 +88,11 @@ Anyone with the invitation can join while the room remains open.
 The QR is outside the game's fullscreen view; exit fullscreen to show it.
 Local development URLs refer to localhost and cannot invite another device.
 
+Touch controls, fullscreen, flight, and QR invitations were published on
+2026-11-02. Reload participating browsers to receive the updated client;
+no Worker or protocol update is required for these features. Tablet camera
+and normal gameplay checks on actual devices remain recommended.
+
 The server validates block IDs, coordinates, reach, and placements overlapping
 participants. Edits are limited to 10 per second per participant; position
 messages to 20 per second; snapshot requests to two per second. Coordinates
