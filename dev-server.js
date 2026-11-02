@@ -13,6 +13,7 @@ const files = new Map([
   ["/config.js", ["config.js", "text/javascript; charset=utf-8"]],
   ["/world-model.js", ["world-model.js", "text/javascript; charset=utf-8"]],
   ["/multiplayer.js", ["multiplayer.js", "text/javascript; charset=utf-8"]],
+  ["/vendor/qrcode.js", ["vendor/qrcode.js", "text/javascript; charset=utf-8"]],
   ["/game.js", ["game.js", "text/javascript; charset=utf-8"]],
 ]);
 

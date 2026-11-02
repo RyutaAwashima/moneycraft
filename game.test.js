@@ -7,7 +7,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { webcrypto } = require("node:crypto");
 
-function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, height: 20 } } = {}) {
+function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, height: 20 }, fullscreen = "unsupported" } = {}) {
   const uploads = [];
   const errors = [];
   const context2d = { fillRect() {}, drawImage() {} };
@@ -28,8 +28,16 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
     height = 540;
     clientWidth = 960;
     clientHeight = 540;
-    classList = { add() {}, remove() {} };
-    style = { setProperty() {} };
+    classes = new Set();
+    classList = {
+      add: (name) => this.classes.add(name),
+      remove: (name) => this.classes.delete(name),
+      contains: (name) => this.classes.has(name),
+      toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name),
+    };
+    style = { setProperty(name, value) { this[name] = value; } };
+    getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 540 }; }
+    setPointerCapture() {}
     append(...children) { this.children.push(...children); }
     replaceChildren(...children) { this.children = children; }
     setAttribute(name, value) { this.attributes.set(name, value); }
@@ -43,21 +51,35 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
     return elements.get(selector);
   };
   document.createElement = () => new Element();
+  document.body = new Element();
+  if (fullscreen !== "unsupported") {
+    document.querySelector(".game-card").requestFullscreen = async () => {
+      if (fullscreen === "rejected") throw new Error("Fullscreen denied");
+      document.fullscreenElement = document.querySelector(".game-card");
+      document.dispatchEvent(new Event("fullscreenchange"));
+    };
+    document.exitFullscreen = async () => {
+      document.fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    };
+  }
   const window = new EventTarget();
   const timers = new Map();
   let nextTimer = 0;
   let frame;
+  let time = 0;
+  const intervals = [];
   Object.assign(window, {
     setTimeout: (callback) => { timers.set(++nextTimer, callback); return nextTimer; },
     clearTimeout: (id) => timers.delete(id),
-    setInterval() {},
+    setInterval: (callback) => intervals.push(callback),
     requestAnimationFrame: (callback) => { frame = callback; },
     confirm: () => true,
   });
   const saved = new Map();
   const context = {
     window, document, CustomEvent, Event, HTMLInputElement: class {}, HTMLTextAreaElement: class {},
-    crypto: webcrypto, performance, console: { error: (...args) => errors.push(args), warn() {} },
+    crypto: webcrypto, performance: { now: () => time }, console: { error: (...args) => errors.push(args), warn() {} },
     localStorage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
   };
   context.globalThis = context;
@@ -90,8 +112,31 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
   const change = (revision, x, y, z, block = 7, expectedBlock = 0, requestId = `edit-${revision}`) => emit("block-changed", {
     revision, x, y, z, block, expectedBlock, requestId, playerId: "self",
   });
+  let state;
+  window.addEventListener("moneycraft:send-player-state", (event) => { state = event.detail; });
   return { get model() { return model; }, worldApi, originalSave, elements, uploads, saved, emit, join, change, roomWorld, window, document, timers,
-    frame: () => frame(100), errors };
+    frame: (count = 1) => { for (let i = 0; i < count; i += 1) { time += 1000 / 30; frame(time); } },
+    advance: (ms) => { time += ms; },
+    state: () => { for (const callback of intervals) callback(); return state; },
+    errors };
+}
+
+function input(target, type, properties = {}) {
+  const event = new Event(type, { cancelable: true });
+  Object.assign(event, properties);
+  target.dispatchEvent(event);
+}
+
+function pressJump(game) {
+  input(game.window, "keydown", { code: "Space", repeat: false });
+  input(game.window, "keyup", { code: "Space" });
+}
+
+function startFlying(game) {
+  pressJump(game);
+  game.advance(150);
+  pressJump(game);
+  assert.equal(game.elements.get("#flight-status").hidden, false);
 }
 
 test("nine materials render previews and only edited chunks are uploaded", () => {
@@ -227,4 +272,157 @@ test("joining avoids occupied spawn positions and sends the new position immedia
   game.frame();
   assert.deepEqual(game.errors, []);
   game.emit("room-left", {});
+});
+
+test("double jump toggles flight, hovers, ascends, descends and resumes gravity", () => {
+  const game = createGame();
+  game.join();
+  startFlying(game);
+  const hoverY = game.state().y;
+  game.frame(15);
+  assert.equal(game.state().y, hoverY);
+  input(game.window, "keydown", { code: "Space", repeat: false });
+  game.frame(10);
+  input(game.window, "keyup", { code: "Space" });
+  assert.ok(Math.abs(game.state().y - hoverY - 1.5) < 0.001);
+  game.frame(10);
+  const upperY = game.state().y;
+  input(game.window, "keydown", { code: "ShiftLeft" });
+  game.frame(5);
+  input(game.window, "keyup", { code: "ShiftLeft" });
+  assert.ok(Math.abs(game.state().y - upperY + 0.75) < 0.001);
+  pressJump(game);
+  game.advance(150);
+  pressJump(game);
+  assert.equal(game.elements.get("#flight-status").hidden, true);
+  const fallingY = game.state().y;
+  game.frame(3);
+  assert.ok(game.state().y < fallingY);
+  game.frame(60);
+  assert.equal(game.state().y, 1);
+});
+
+test("flight requires separate presses within 300ms, not keyboard auto-repeat", () => {
+  for (const interval of [299, 300, 301]) {
+    const game = createGame();
+    game.join();
+    pressJump(game);
+    game.advance(interval);
+    pressJump(game);
+    assert.equal(game.elements.get("#flight-status").hidden, interval > 300);
+  }
+  const game = createGame();
+  game.join();
+  input(game.window, "keydown", { code: "Space", repeat: false });
+  game.advance(100);
+  input(game.window, "keydown", { code: "Space", repeat: true });
+  assert.equal(game.elements.get("#flight-status").hidden, true);
+});
+
+test("flight respects floor, ceiling, walls and network height limit; resync preserves altitude", () => {
+  const game = createGame();
+  game.join();
+  startFlying(game);
+  const { x, z } = game.state();
+  game.model.setBlock(Math.floor(x), 4, Math.floor(z), 3);
+  input(game.window, "keydown", { code: "Space", repeat: false });
+  game.frame(40);
+  assert.ok(game.state().y + 1.7 <= 4.001);
+  game.model.setBlock(Math.floor(x), 4, Math.floor(z), 0);
+  game.frame(250);
+  assert.equal(game.state().y, 30);
+  input(game.window, "keyup", { code: "Space" });
+  game.emit("world-snapshot", { world: game.roomWorld, revision: 0 });
+  assert.equal(game.state().y, 30);
+  input(game.window, "keydown", { code: "ShiftRight" });
+  game.frame(250);
+  input(game.window, "keyup", { code: "ShiftRight" });
+  assert.equal(game.state().y, 1);
+  game.model.setBlock(Math.floor(x), 1, Math.floor(z) - 1, 3);
+  input(game.window, "keydown", { code: "KeyW" });
+  game.frame(20);
+  assert.ok(game.state().z >= Math.floor(z) + 0.28);
+});
+
+test("touch movement/look and held flight buttons work together and cancel cleanly", () => {
+  const game = createGame();
+  game.join();
+  const canvas = game.elements.get("#game");
+  const jump = game.elements.get("#touch-jump");
+  const down = game.elements.get("#touch-descend");
+  const touch = { pointerType: "touch", pointerId: 1, clientX: 70, clientY: 470 };
+  input(canvas, "pointerdown", touch);
+  input(canvas, "pointermove", { ...touch, clientY: 426 });
+  input(canvas, "pointerdown", { ...touch, pointerId: 2, clientX: 700 });
+  input(canvas, "pointermove", { ...touch, pointerId: 2, clientX: 730 });
+  const start = game.state();
+  game.frame(5);
+  assert.notEqual(game.state().z, start.z);
+  assert.notEqual(game.state().yaw, 0);
+  assert.equal(game.elements.get(".game-card").classList.contains("touch-enabled"), true);
+  input(canvas, "pointercancel", touch);
+  const stopped = game.state();
+  game.frame(5);
+  assert.equal(game.state().z, stopped.z);
+  input(jump, "pointerdown", { ...touch, pointerId: 3 });
+  input(jump, "pointerup", { ...touch, pointerId: 3 });
+  game.advance(150);
+  input(jump, "pointerdown", { ...touch, pointerId: 3 });
+  game.frame(5);
+  input(jump, "lostpointercapture", { ...touch, pointerId: 3 });
+  const altitude = game.state().y;
+  game.frame(5);
+  assert.equal(game.state().y, altitude);
+  input(down, "pointerdown", { ...touch, pointerId: 4 });
+  game.frame(3);
+  assert.ok(game.state().y < altitude);
+  input(game.window, "blur");
+  const blurred = game.state();
+  game.frame(5);
+  assert.equal(game.state().y, blurred.y);
+  input(jump, "pointerdown", { ...touch, pointerId: 3 });
+  game.document.hidden = true;
+  input(game.document, "visibilitychange");
+  const hidden = game.state().y;
+  game.frame(5);
+  assert.equal(game.state().y, hidden);
+});
+
+test("changing worlds resets held input and restores solo flight independently", () => {
+  const game = createGame();
+  startFlying(game);
+  input(game.window, "keydown", { code: "Space", repeat: false });
+  game.join();
+  assert.equal(game.elements.get("#flight-status").hidden, true);
+  game.emit("room-left", {});
+  assert.equal(game.elements.get("#flight-status").hidden, false);
+  const y = game.state().y;
+  game.frame(10);
+  assert.equal(game.state().y, y);
+});
+
+test("fullscreen supports native exit and page-filling fallback without hiding the hotbar", async () => {
+  for (const fullscreen of ["unsupported", "native"]) {
+    const game = createGame({ fullscreen });
+    const button = game.elements.get("#fullscreen-game");
+    const card = game.elements.get(".game-card");
+    input(button, "click");
+    await Promise.resolve();
+    assert.equal(button.attributes.get("aria-pressed"), "true");
+    assert.equal(card.classList.contains("is-expanded"), true);
+    assert.equal(game.elements.get("#hotbar").children.length, 9);
+    if (fullscreen === "native") await game.document.exitFullscreen();
+    else input(game.window, "keydown", { code: "Escape" });
+    assert.equal(button.attributes.get("aria-pressed"), "false");
+    assert.equal(game.document.body.classList.contains("game-expanded"), false);
+  }
+});
+
+test("fullscreen denial is reported and leaves the normal layout intact", async () => {
+  const game = createGame({ fullscreen: "rejected" });
+  input(game.elements.get("#fullscreen-game"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.errors.length, 1);
+  assert.equal(game.elements.get("#fullscreen-game").attributes.get("aria-pressed"), "false");
+  assert.match(game.elements.get("#game-message").textContent, /切り替えられません/);
 });

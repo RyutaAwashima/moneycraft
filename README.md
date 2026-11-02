@@ -24,13 +24,21 @@ file server.
 
 - Click the game to capture the mouse; move the mouse to look around
 - `W` / `A` / `S` / `D`: move; `Space`: jump
+- Press jump twice within 300 ms to toggle flight. While flying, hold
+  `Space` to ascend or `Shift` to descend; release to hover. Walls and
+  ceilings still block movement, and feet cannot rise above world height + 10.
 - Aim at a nearby block and left-click: mine it
 - Right-click an adjacent empty space: place the selected block
 - `1`–`9` or click a hotbar slot: select a block
 - `I`: toggle the world-coordinate and movement indicator
 - `Esc`: release the mouse
 - On touch devices, drag the left half to move and the right half to look;
-  use the on-screen buttons to mine, place, and jump
+  a virtual pad stays visible while idle. Use the on-screen buttons to mine,
+  place, and jump. Double-tap jump to toggle flight; hold the ascent or descent
+  button to change height. Releasing a touch or leaving the page clears held input.
+- Use the fullscreen button to show just the game, controls, and hotbar.
+  Exit with the same button or `Esc`. Browsers without element fullscreen
+  support use a page-filling layout instead (browser chrome may remain).
 
 All nine blocks have small procedural pixel textures. Planks, bricks, a white
 wall, and an opaque glass-style window are available alongside the original
@@ -70,6 +78,15 @@ being broadcast to everyone, including the editor. Conflicting edits use
 server processing order and compare the expected block before applying.
 Clients request a fresh snapshot on revision gaps, conflicts, or edit timeouts.
 Only edited chunks and their affected neighbors are rebuilt.
+
+Room details include an invitation QR code and a link. Scan the QR with a
+tablet's standard camera to open the game with the room code filled in, then
+press Join. No automatic connection is made. Invitation URLs contain only
+`?room=ABCDEF`, never owner credentials or other query parameters. QR images
+are generated locally; no external QR service receives the room code.
+Anyone with the invitation can join while the room remains open.
+The QR is outside the game's fullscreen view; exit fullscreen to show it.
+Local development URLs refer to localhost and cannot invite another device.
 
 The server validates block IDs, coordinates, reach, and placements overlapping
 participants. Edits are limited to 10 per second per participant; position
@@ -132,3 +149,11 @@ the updated client.
 
 Because the game is a static site with relative asset paths, it works from a
 GitHub Pages project URL as well as from the repository root.
+
+## Third-party code
+
+QR generation uses the unmodified `qrcode-generator` 2.0.4 distribution in
+[`vendor/qrcode.js`](./vendor/qrcode.js), by Kazuhiko Arase, under the
+[MIT license](./vendor/qrcode.LICENSE).
+Source: <https://github.com/kazuhikoarase/qrcode-generator>.
+No runtime CDN or package installation is required to play.

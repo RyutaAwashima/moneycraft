@@ -10,6 +10,10 @@
   const touchMine = document.querySelector("#touch-mine");
   const touchPlace = document.querySelector("#touch-place");
   const touchJump = document.querySelector("#touch-jump");
+  const touchDescend = document.querySelector("#touch-descend");
+  const flightStatus = document.querySelector("#flight-status");
+  const gameCard = document.querySelector(".game-card");
+  const fullscreenButton = document.querySelector("#fullscreen-game");
   const saveState = document.querySelector("#save-state");
   const resetButton = document.querySelector("#reset-world");
   const remotePlayerLabels = document.querySelector("#remote-player-labels");
@@ -27,11 +31,16 @@
   const REACH = 6;
   const GRAVITY = 19;
   const JUMP_SPEED = 7.8;
+  const FLIGHT_SPEED = 4.5;
+  const DOUBLE_JUMP_MS = 300;
   const blocks = globalThis.MoneycraftWorld.blocks;
   let worldModel = globalThis.MoneycraftWorld.createModel(globalThis.MoneycraftWorld.defaultOptions);
   const keys = new Set();
   const touchPointers = new Map();
   const touchMove = { x: 0, z: 0 };
+  const heldTouchActions = new Map();
+  let lastJumpTime = -Infinity;
+  let expanded = false;
   const faces = [
     { normal: [1, 0, 0], neighbor: [1, 0, 0], light: 0.82, corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
     { normal: [-1, 0, 0], neighbor: [-1, 0, 0], light: 0.72, corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]] },
@@ -117,6 +126,8 @@
       saveGame();
       soloSnapshot = { world: worldModel.serialize(), player: { ...player } };
     }
+    clearInput();
+    setFlying(false);
     roomMode = "connecting";
     awaitingSnapshot = false;
     clearPendingEdits();
@@ -135,6 +146,8 @@
       throw new Error("Could not restore the solo world.");
     }
     player = { ...soloSnapshot.player };
+    clearInput();
+    updateFlightControls();
     soloSnapshot = null;
     roomMode = "solo";
     resetButton.disabled = false;
@@ -175,7 +188,10 @@
     awaitingSnapshot = false;
     clearPendingEdits();
     rebuildWorldMesh();
-    if (!inBounds(Math.floor(player.x), Math.floor(player.y), Math.floor(player.z))
+    const { width, depth, height } = worldModel.dimensions;
+    if (player.x < PLAYER_RADIUS || player.x > width - PLAYER_RADIUS
+      || player.z < PLAYER_RADIUS || player.z > depth - PLAYER_RADIUS
+      || player.y < 0 || player.y > height + 10
       || collidesAt(player.x, player.y, player.z)) moveToSafeSpawn();
     saveState.textContent = "共有ワールドをサーバーに保存";
     return true;
@@ -397,6 +413,8 @@
       player.z = candidate.z;
       player.velocityY = 0;
       player.grounded = true;
+      setFlying(false);
+      clearInput();
       return;
     }
     throw new Error("Could not find a clear player spawn location.");
@@ -882,7 +900,7 @@
   }
 
   function update(dt) {
-    const { width, depth } = worldModel.dimensions;
+    const { width, depth, height } = worldModel.dimensions;
     const forwardInput = Math.max(-1, Math.min(1,
       Number(keys.has("KeyW") || keys.has("ArrowUp"))
       - Number(keys.has("KeyS") || keys.has("ArrowDown"))
@@ -901,8 +919,14 @@
     const nextZ = Math.max(PLAYER_RADIUS, Math.min(depth - PLAYER_RADIUS, player.z + stepZ));
     if (!collidesAt(player.x, player.y, nextZ)) player.z = nextZ;
 
-    player.velocityY -= GRAVITY * dt;
-    const nextY = player.y + player.velocityY * dt;
+    if (player.flying) {
+      const up = keys.has("Space") || [...heldTouchActions.values()].includes("up");
+      const down = keys.has("ShiftLeft") || keys.has("ShiftRight") || [...heldTouchActions.values()].includes("down");
+      player.velocityY = (Number(up) - Number(down)) * FLIGHT_SPEED;
+    } else {
+      player.velocityY -= GRAVITY * dt;
+    }
+    const nextY = Math.min(height + 10, player.y + player.velocityY * dt);
     if (nextY < 0 && !collidesAt(player.x, 0, player.z)) {
       player.y = 0;
       player.velocityY = 0;
@@ -1053,6 +1077,7 @@
   });
   canvas.addEventListener("pointerdown", (event) => {
     if (event.pointerType !== "touch") return;
+    enableTouchControls();
     event.preventDefault();
     const bounds = canvas.getBoundingClientRect();
     const zone = event.clientX - bounds.left < bounds.width / 2 ? "move" : "look";
@@ -1067,7 +1092,6 @@
     touchPointers.set(event.pointerId, pointer);
     canvas.setPointerCapture(event.pointerId);
     if (zone === "move") {
-      virtualStick.hidden = false;
       virtualStick.style.left = `${event.clientX - bounds.left}px`;
       virtualStick.style.top = `${event.clientY - bounds.top}px`;
       updateTouchMovement(pointer, event);
@@ -1107,33 +1131,87 @@
     if (pointer.zone === "move") {
       touchMove.x = 0;
       touchMove.z = 0;
-      virtualStick.hidden = true;
+      resetStick();
     }
   }
   canvas.addEventListener("pointerup", endTouchPointer);
   canvas.addEventListener("pointercancel", endTouchPointer);
   canvas.addEventListener("lostpointercapture", endTouchPointer);
 
+  function updateFlightControls() {
+    flightStatus.hidden = !player.flying;
+    touchDescend.hidden = !player.flying;
+    touchJump.textContent = player.flying ? "上昇" : "ジャンプ";
+    touchJump.setAttribute("aria-label", player.flying ? "上昇。素早く2回で飛行を解除" : "ジャンプ。素早く2回で飛行");
+  }
+  function setFlying(flying) {
+    player.flying = flying;
+    player.velocityY = 0;
+    lastJumpTime = -Infinity;
+    updateFlightControls();
+  }
   function jump() {
+    const now = performance.now();
+    if (now - lastJumpTime <= DOUBLE_JUMP_MS) {
+      setFlying(!player.flying);
+      message.textContent = player.flying ? "飛行中：ジャンプ長押しで上昇、Shift／下降ボタンで下降" : "飛行を解除しました";
+      return;
+    }
+    lastJumpTime = now;
+    if (player.flying) return;
     if (!player.grounded) return;
     player.velocityY = JUMP_SPEED;
     player.grounded = false;
   }
-  function bindTouchAction(button, action) {
+  function enableTouchControls() {
+    gameCard.classList.add("touch-enabled");
+    if (message.textContent === "ゲーム画面をクリックしてスタート") {
+      message.textContent = "左のパッドで移動、画面右をドラッグして見回します";
+    }
+  }
+  function resetStick() {
+    virtualStick.style.left = "";
+    virtualStick.style.top = "";
+    virtualStick.style.setProperty("--stick-x", "0px");
+    virtualStick.style.setProperty("--stick-y", "0px");
+  }
+  function clearInput() {
+    keys.clear();
+    touchPointers.clear();
+    heldTouchActions.clear();
+    touchMove.x = 0;
+    touchMove.z = 0;
+    lastJumpTime = -Infinity;
+    resetStick();
+  }
+  function bindTouchAction(button, action, heldAction) {
     button.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (event.pointerType === "touch") enableTouchControls();
+      if (heldAction) {
+        if ([...heldTouchActions.values()].includes(heldAction)) return;
+        heldTouchActions.set(event.pointerId, heldAction);
+        button.setPointerCapture(event.pointerId);
+      }
       action();
     });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      button.addEventListener(type, (event) => heldTouchActions.delete(event.pointerId));
+    }
   }
   bindTouchAction(touchMine, mineBlock);
   bindTouchAction(touchPlace, placeBlock);
-  bindTouchAction(touchJump, jump);
+  bindTouchAction(touchJump, jump, "up");
+  bindTouchAction(touchDescend, () => {}, "down");
   document.addEventListener("pointerlockchange", () => {
     pointerLockPending = false;
+    if (document.pointerLockElement !== canvas) clearInput();
     message.textContent = document.pointerLockElement === canvas
       ? "Escでカーソルを戻せます"
-      : "ゲーム画面をクリックしてスタート";
+      : gameCard.classList.contains("touch-enabled")
+        ? "左のパッドで移動、画面右をドラッグして見回します"
+        : "ゲーム画面をクリックしてスタート";
   });
   document.addEventListener("pointerlockerror", () => {
     pointerLockPending = false;
@@ -1155,11 +1233,50 @@
       const index = Number(event.code.slice(5));
       if (index >= 1 && index <= blocks.length) selectBlock(index);
     }
-    if (event.code === "Space") jump();
+    if (event.code === "Escape" && expanded) void toggleFullscreen();
+    if (event.code === "Space" && !event.repeat && !keys.has("Space")) jump();
     keys.add(event.code);
   });
   window.addEventListener("keyup", (event) => keys.delete(event.code));
-  window.addEventListener("blur", () => keys.clear());
+  window.addEventListener("blur", clearInput);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) clearInput();
+  });
+
+  function updateFullscreenControls() {
+    fullscreenButton.textContent = expanded ? "全画面を終了" : "全画面";
+    fullscreenButton.setAttribute("aria-pressed", String(expanded));
+    gameCard.classList.toggle("is-expanded", expanded);
+    document.body.classList.toggle("game-expanded", expanded);
+    clearInput();
+  }
+  async function toggleFullscreen() {
+    if (fullscreenButton.disabled) return;
+    fullscreenButton.disabled = true;
+    try {
+      if (expanded) {
+        if (document.fullscreenElement === gameCard) await document.exitFullscreen();
+        expanded = false;
+      } else {
+        expanded = true;
+        updateFullscreenControls();
+        if (typeof gameCard.requestFullscreen === "function" && document.fullscreenEnabled !== false) {
+          await gameCard.requestFullscreen();
+        }
+      }
+    } catch (error) {
+      console.error("Could not change fullscreen mode.", error);
+      expanded = document.fullscreenElement === gameCard;
+      message.textContent = "全画面を切り替えられませんでした。もう一度お試しください";
+    }
+    updateFullscreenControls();
+    fullscreenButton.disabled = false;
+  }
+  fullscreenButton.addEventListener("click", toggleFullscreen);
+  document.addEventListener("fullscreenchange", () => {
+    expanded = document.fullscreenElement === gameCard;
+    updateFullscreenControls();
+  });
   resetButton.addEventListener("click", () => {
     if (roomMode !== "solo") return;
     if (!window.confirm("ひとり用ワールドを新しい64×64の草原と森に置き換えますか？今の建築は削除されます。")) return;
@@ -1199,6 +1316,7 @@
     updateWorldLabel();
     buildHotbar();
     rebuildWorldMesh();
+    if (window.matchMedia?.("(any-pointer: coarse)").matches) enableTouchControls();
     window.setInterval(sendCurrentPlayerState, PLAYER_STATE_INTERVAL_MS);
     window.requestAnimationFrame(frame);
   } catch (error) {

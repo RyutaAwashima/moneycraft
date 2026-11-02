@@ -9,10 +9,14 @@
   const roomStatus = document.querySelector("#room-status");
   const roomDetails = document.querySelector("#room-details");
   const roomShareCode = document.querySelector("#room-share-code");
+  const roomQr = document.querySelector("#room-qr");
+  const roomInviteLink = document.querySelector("#room-invite-link");
+  const roomQrStatus = document.querySelector("#room-qr-status");
   const roomRoster = document.querySelector("#room-roster");
   const roomRosterCount = document.querySelector("#room-roster-count");
   const roomOwnerNote = document.querySelector("#room-owner-note");
   const OWNER_SESSION_KEY = "moneycraft-room-owner-v1";
+  const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
   const API_BASE_URL = (globalThis.MONEYCRAFT_CONFIG?.apiBaseUrl || window.location.origin)
     .replace(/\/+$/, "");
 
@@ -22,6 +26,7 @@
   let maxPlayers = 8;
   let isRoomOwner = false;
   let worldReady = false;
+  let renderedInviteCode = "";
   const PROTOCOL_VERSION = 3;
   const players = new Map();
 
@@ -44,12 +49,43 @@
     const hasRoom = Boolean(currentRoomCode);
     roomDetails.hidden = !hasRoom;
     roomShareCode.textContent = currentRoomCode;
+    updateRoomInvite();
     roomOwnerNote.textContent = isRoomOwner
       ? "このブラウザーからワールドを閉じられます"
       : "部屋を作成した教員だけがワールドを閉じられます";
     closeButton.hidden = !isRoomOwner;
     leaveButton.disabled = !activeSocket;
     renderRoster();
+  }
+
+  function updateRoomInvite() {
+    if (renderedInviteCode === currentRoomCode) return;
+    roomQr.hidden = true;
+    roomQr.removeAttribute("src");
+    roomInviteLink.hidden = true;
+    roomInviteLink.removeAttribute("href");
+    roomQrStatus.textContent = "";
+    renderedInviteCode = "";
+    if (!currentRoomCode) return;
+    try {
+      if (!ROOM_CODE_PATTERN.test(currentRoomCode)) throw new Error("Invalid invitation room code");
+      const url = new URL(window.location.href);
+      url.search = "";
+      url.hash = "";
+      url.searchParams.set("room", currentRoomCode);
+      roomInviteLink.href = url.href;
+      roomInviteLink.hidden = false;
+      const qr = globalThis.qrcode(0, "M");
+      qr.addData(url.href, "Byte");
+      qr.make();
+      roomQr.src = qr.createDataURL(4);
+      roomQr.alt = `部屋 ${currentRoomCode} に参加するためのQRコード`;
+      roomQr.hidden = false;
+      renderedInviteCode = currentRoomCode;
+    } catch (error) {
+      console.error("Could not generate the room invitation QR code.", error);
+      roomQrStatus.textContent = "QRコードを生成できませんでした。部屋コードか参加用リンクを使ってください。";
+    }
   }
 
   function emitRoomEvent(type, detail) {
@@ -322,7 +358,7 @@
 
   function joinRoom() {
     const roomCode = roomCodeInput.value.trim().toUpperCase();
-    if (!/^[A-HJ-NP-Z2-9]{6}$/.test(roomCode)) {
+    if (!ROOM_CODE_PATTERN.test(roomCode)) {
       setStatus("部屋コードは6文字で入力してください。", "error");
       roomCodeInput.focus();
       return;
@@ -411,5 +447,15 @@
     isRoomOwner = true;
     updateRoomDetails();
     setStatus("作成者用の終了権限があります。コードを共有して参加者を招待できます。");
+  }
+  const invitedRoom = new URL(window.location.href).searchParams.get("room");
+  if (invitedRoom !== null) {
+    const code = invitedRoom.trim().toUpperCase();
+    if (ROOM_CODE_PATTERN.test(code)) {
+      roomCodeInput.value = code;
+      setStatus(`招待された部屋 ${code} に入るには「参加する」を押してください。`);
+    } else {
+      setStatus("参加用リンクの部屋コードが正しくありません。6文字のコードを確認してください。", "error");
+    }
   }
 })();
