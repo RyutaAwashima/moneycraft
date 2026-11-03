@@ -288,6 +288,7 @@ h1 {
 
 .room-management {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
@@ -367,6 +368,81 @@ h1 {
 
 .room-close:hover {
   background: #fff5f2;
+}
+
+.work-management {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid #e1e9df;
+  border-radius: 8px;
+  background: #f8faf6;
+}
+
+.work-management h3 {
+  margin: 0;
+  color: #315f4b;
+  font-size: 13px;
+}
+
+.work-management label,
+.backup-note,
+.backup-list {
+  color: #68776c;
+  font-size: 11px;
+}
+
+.work-management-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.work-management-actions input {
+  flex: 1 1 210px;
+  min-width: 0;
+  min-height: 37px;
+  padding: 0 10px;
+  border: 1px solid #dce4da;
+  border-radius: 7px;
+  font: inherit;
+}
+
+.backup-note {
+  margin: 0;
+}
+
+.backup-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.backup-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 7px;
+  border-radius: 6px;
+  background: #eef3eb;
+}
+
+.backup-list time {
+  color: #839087;
+}
+
+#work-management-status {
+  color: #77847b;
+  font-size: 11px;
+}
+
+#work-management-status:empty {
+  display: none;
 }
 
 .intro-copy {

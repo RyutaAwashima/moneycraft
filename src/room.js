@@ -17,6 +17,8 @@ const EMAIL_TOKEN_TTL_MS = 15 * 60_000;
 const EMAIL_RATE_WINDOW_MS = 60 * 60_000;
 const EMAIL_SOURCE_RATE_LIMIT = 10;
 const EMAIL_RECIPIENT_RATE_LIMIT = 3;
+const WORK_NAME_MAX_LENGTH = 80;
+const BACKUP_MAX_COUNT = 10;
 const DISPLAY_NAME_PREFIXES = [
   "こもれび",
   "ひだまり",
@@ -79,10 +81,17 @@ function isValidEmail(email) {
 export class Room {
   constructor(ctx) {
     this.ctx = ctx;
+    this.operationQueue = Promise.resolve();
   }
 
-  async fetch(request) {
-    return this.ctx.blockConcurrencyWhile(() => this.route(request));
+  fetch(request) {
+    return this.runExclusive(() => this.ctx.blockConcurrencyWhile(() => this.route(request)));
+  }
+
+  runExclusive(operation) {
+    const result = this.operationQueue.then(operation);
+    this.operationQueue = result.catch(() => {});
+    return result;
   }
 
   async route(request) {
@@ -92,6 +101,24 @@ export class Room {
     }
     if (url.pathname === "/internal/close" && request.method === "POST") {
       return this.closeRoom(request);
+    }
+    if (url.pathname === "/internal/end-class" && request.method === "POST") {
+      return this.endClass(request);
+    }
+    if (url.pathname === "/internal/work" && request.method === "GET") {
+      return this.getWork(request);
+    }
+    if (url.pathname === "/internal/work" && request.method === "PATCH") {
+      return this.renameWork(request);
+    }
+    if (url.pathname === "/internal/backups" && request.method === "GET") {
+      return this.listBackups(request);
+    }
+    if (url.pathname === "/internal/backups" && request.method === "POST") {
+      return this.createBackup(request);
+    }
+    if (url.pathname === "/internal/backups/restore" && request.method === "POST") {
+      return this.restoreBackup(request);
     }
     if (url.pathname === "/internal/teacher-email/request" && request.method === "POST") {
       return this.requestTeacherEmail(request);
@@ -124,6 +151,7 @@ export class Room {
     }
     const room = {
       createdAt: Date.now(),
+      workName: "新しい作品",
       ownerTokenHash: toHex(await digestToken(ownerToken)),
       worldSeed: worldSeed >>> 0,
       worldOptions: WORLD_DIMENSIONS,
@@ -151,6 +179,228 @@ export class Room {
     }
     await this.ctx.storage.deleteAll();
     return jsonResponse({ ok: true });
+  }
+
+  async endClass(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "room_not_found" }, 404);
+    if (!await this.isOwner(request, room)) return jsonResponse({ error: "forbidden" }, 403);
+
+    for (const socket of this.ctx.getWebSockets()) {
+      socket.close(4003, "Class ended; work saved");
+    }
+    return jsonResponse({ ok: true, workName: room.workName || "新しい作品" });
+  }
+
+  async isOwner(request, room) {
+    const token = request.headers.get(OWNER_TOKEN_HEADER);
+    return Boolean(token && matchesHash(toHex(await digestToken(token)), room.ownerTokenHash));
+  }
+
+  async getWork(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "room_not_found" }, 404);
+    if (!await this.isOwner(request, room)) return jsonResponse({ error: "forbidden" }, 403);
+    return jsonResponse({
+      workName: room.workName || "新しい作品",
+      backups: await this.getBackupList(),
+      activePlayers: this.ctx.getWebSockets().length,
+    });
+  }
+
+  async renameWork(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "room_not_found" }, 404);
+    if (!await this.isOwner(request, room)) return jsonResponse({ error: "forbidden" }, 403);
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid_request" }, 400);
+    }
+    const workName = typeof body?.workName === "string" ? body.workName.trim() : "";
+    if (!workName || workName.length > WORK_NAME_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(workName)) {
+      return jsonResponse({ error: "invalid_work_name" }, 400);
+    }
+    room.workName = workName;
+    await this.ctx.storage.put("room", room);
+    this.broadcast({
+      v: PROTOCOL_VERSION,
+      type: "work-renamed",
+      payload: { workName },
+    });
+    return jsonResponse({ ok: true, workName });
+  }
+
+  async getBackupList() {
+    const backups = await this.ctx.storage.get("backups");
+    if (!Array.isArray(backups)) return [];
+    return backups.map(({ id, name, createdAt, revision }) => ({ id, name, createdAt, revision }));
+  }
+
+  async listBackups(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "room_not_found" }, 404);
+    if (!await this.isOwner(request, room)) return jsonResponse({ error: "forbidden" }, 403);
+    return jsonResponse({ backups: await this.getBackupList() });
+  }
+
+  async createBackup(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "room_not_found" }, 404);
+    if (!await this.isOwner(request, room)) return jsonResponse({ error: "forbidden" }, 403);
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid_request" }, 400);
+    }
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!name || name.length > WORK_NAME_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(name)) {
+      return jsonResponse({ error: "invalid_backup_name" }, 400);
+    }
+
+    const snapshot = await this.getWorldSnapshot(room.worldSeed);
+    const backup = this.createBackupMetadata(name, snapshot);
+    let removedBackup = null;
+    await this.ctx.storage.transaction(async (transaction) => {
+      const backups = await transaction.get("backups") || [];
+      if (backups.length >= BACKUP_MAX_COUNT) {
+        removedBackup = backups.shift();
+        await this.deleteBackupSnapshot(transaction, removedBackup);
+      }
+      await this.writeBackupSnapshot(transaction, backup, snapshot);
+      await transaction.put("backups", [...backups, backup]);
+    });
+    const backups = await this.ctx.storage.get("backups") || [];
+    return jsonResponse({
+      backup: { id: backup.id, name: backup.name, createdAt: backup.createdAt, revision: backup.revision },
+      removedBackup: removedBackup && {
+        id: removedBackup.id,
+        name: removedBackup.name,
+        createdAt: removedBackup.createdAt,
+      },
+      backups: backups.map(({ id, name, createdAt, revision }) => ({ id, name, createdAt, revision })),
+    }, 201);
+  }
+
+  createBackupMetadata(name, snapshot) {
+    const { blocks, ...world } = snapshot.world;
+    return {
+      id: newOpaqueId(12),
+      name,
+      createdAt: Date.now(),
+      revision: snapshot.revision,
+      world,
+      partCount: Math.ceil(blocks.length / WORLD_PART_SIZE),
+    };
+  }
+
+  async writeBackupSnapshot(transaction, backup, snapshot) {
+    const { blocks } = snapshot.world;
+    for (let index = 0; index < backup.partCount; index += 1) {
+      await transaction.put(
+        `backup-${backup.id}-part-${index}`,
+        Uint8Array.from(blocks.slice(index * WORLD_PART_SIZE, (index + 1) * WORLD_PART_SIZE)),
+      );
+    }
+  }
+
+  async deleteBackupSnapshot(transaction, backup) {
+    for (let index = 0; index < backup.partCount; index += 1) {
+      await transaction.delete(`backup-${backup.id}-part-${index}`);
+    }
+  }
+
+  async readBackupSnapshot(backup) {
+    const length = backup.world.width * backup.world.depth * backup.world.height;
+    if (backup.partCount !== Math.ceil(length / WORLD_PART_SIZE)) {
+      throw new Error("Stored backup metadata is invalid.");
+    }
+    const parts = await Promise.all(Array.from({ length: backup.partCount }, (_, index) =>
+      this.ctx.storage.get(`backup-${backup.id}-part-${index}`)));
+    const blocks = [];
+    for (const [index, part] of parts.entries()) {
+      if (!(part instanceof Uint8Array) || part.length !== Math.min(WORLD_PART_SIZE, length - index * WORLD_PART_SIZE)) {
+        throw new Error("Stored backup part is missing or invalid.");
+      }
+      blocks.push(...part);
+    }
+    const snapshot = { world: { ...backup.world, blocks }, revision: backup.revision };
+    this.validateWorldSnapshot(snapshot);
+    return snapshot;
+  }
+
+  async restoreBackup(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "room_not_found" }, 404);
+    if (!await this.isOwner(request, room)) return jsonResponse({ error: "forbidden" }, 403);
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid_request" }, 400);
+    }
+    if (typeof body?.backupId !== "string" || !/^[a-f0-9]{24}$/.test(body.backupId)) {
+      return jsonResponse({ error: "invalid_backup_id" }, 400);
+    }
+    const backups = await this.ctx.storage.get("backups") || [];
+    const selected = backups.find(({ id }) => id === body.backupId);
+    if (!selected) return jsonResponse({ error: "backup_not_found" }, 404);
+
+    const [current, restored] = await Promise.all([
+      this.getWorldSnapshot(room.worldSeed),
+      this.readBackupSnapshot(selected),
+    ]);
+    const recoveryBackup = this.createBackupMetadata("復元前の自動保存", current);
+    const nextSnapshot = {
+      world: restored.world,
+      revision: current.revision + 1,
+    };
+    this.broadcast({
+      v: PROTOCOL_VERSION,
+      type: "work-restore-start",
+      payload: { backupName: selected.name },
+    });
+    let retainedBackups;
+    try {
+      await this.ctx.storage.transaction(async (transaction) => {
+        const existing = await transaction.get("backups") || [];
+        retainedBackups = [...existing, recoveryBackup];
+        while (retainedBackups.length > BACKUP_MAX_COUNT) {
+          const oldest = retainedBackups.shift();
+          await this.deleteBackupSnapshot(transaction, oldest);
+        }
+        await this.writeBackupSnapshot(transaction, recoveryBackup, current);
+        await this.writeWorldSnapshot(transaction, nextSnapshot);
+        await transaction.put("backups", retainedBackups);
+      });
+    } catch (error) {
+      this.broadcast({
+        v: PROTOCOL_VERSION,
+        type: "work-restore-cancelled",
+        payload: {},
+      });
+      console.error("Could not atomically restore a work snapshot.");
+      return jsonResponse({ error: "restore_failed" }, 503);
+    }
+    this.worldModel = null;
+    const payload = { world: nextSnapshot.world, revision: nextSnapshot.revision };
+    this.broadcast({ v: PROTOCOL_VERSION, type: "world-snapshot", payload });
+    this.broadcast({
+      v: PROTOCOL_VERSION,
+      type: "work-restored",
+      payload: { backupName: selected.name },
+    });
+    return jsonResponse({
+      ok: true,
+      workName: room.workName || "新しい作品",
+      revision: nextSnapshot.revision,
+      backups: retainedBackups.map(({ id, name, createdAt, revision }) => ({ id, name, createdAt, revision })),
+    });
   }
 
   async requestTeacherEmail(request) {
@@ -354,6 +604,7 @@ export class Room {
       type: "welcome",
       payload: {
         roomCode: new URL(request.url).searchParams.get("code"),
+        workName: room.workName || "新しい作品",
         player: { id: player.id, displayName: player.displayName },
         players: this.listPlayers(currentSockets),
         world: snapshot.world,
@@ -472,7 +723,11 @@ export class Room {
     }
   }
 
-  async webSocketMessage(socket, message) {
+  webSocketMessage(socket, message) {
+    return this.runExclusive(() => this.handleWebSocketMessage(socket, message));
+  }
+
+  async handleWebSocketMessage(socket, message) {
     return this.ctx.blockConcurrencyWhile(async () => {
       try {
         await this.handleMessage(socket, message);

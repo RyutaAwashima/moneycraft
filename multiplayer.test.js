@@ -17,8 +17,9 @@ function createClient({
     value = "";
     textContent = "";
     dataset = {};
-    append() {}
-    replaceChildren() {}
+    children = [];
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
     focus() {}
     removeAttribute(name) { delete this[name]; }
   }
@@ -45,6 +46,8 @@ function createClient({
   window.history = {
     replaceState(_state, _title, url) { window.location = new URL(url, window.location.href); },
   };
+  window.confirm = () => true;
+  window.prompt = () => null;
   const document = {
     querySelector(selector) {
       if (!elements.has(selector)) elements.set(selector, new Element());
@@ -232,4 +235,83 @@ test("teacher email verification links send only the one-time token to the API",
   assert.deepEqual(JSON.parse(calls[0].options.body), { token: "v".repeat(43) });
   assert.equal(client.sessions.has("moneycraft-room-owner-v1"), false);
   assert.match(client.elements.get("#room-status").textContent, /メールアドレスを確認しました/);
+});
+
+test("owner save controls load title and backups, then rename, back up, and restore", async () => {
+  const calls = [];
+  const backup = {
+    id: "0123456789abcdef01234567",
+    name: "河川整備の前",
+    createdAt: Date.now(),
+    revision: 3,
+  };
+  let workName = "新しい作品";
+  let backups = [backup];
+  const client = createClient({
+    ownerSession: { roomCode: "ABCD23", ownerToken: "owner-secret" },
+    fetchImpl: async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      calls.push({ path, method: options.method || "GET", body: options.body && JSON.parse(options.body) });
+      if (path.endsWith("/work") && options.method === "PATCH") {
+        workName = JSON.parse(options.body).workName;
+        return { ok: true, status: 200, json: async () => ({ ok: true, workName }) };
+      }
+      if (path.endsWith("/backups") && options.method === "POST") {
+        const created = { ...backup, id: "abcdef0123456789abcdef01", name: JSON.parse(options.body).name };
+        backups = [...backups, created];
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ backup: created, removedBackup: null, backups }),
+        };
+      }
+      if (path.endsWith("/restore")) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, backups }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ workName, backups, activePlayers: 2 }),
+      };
+    },
+  });
+  client.welcome();
+  await new Promise(setImmediate);
+  assert.equal(client.elements.get("#room-work-name").textContent, "新しい作品");
+  assert.equal(client.elements.get("#work-name").value, "新しい作品");
+  assert.equal(client.elements.get("#backup-list").children.length, 1);
+
+  client.elements.get("#work-name").value = "命山のある町";
+  client.elements.get("#save-work-name").dispatchEvent(new Event("click"));
+  await new Promise(setImmediate);
+  assert.equal(client.elements.get("#room-work-name").textContent, "命山のある町");
+
+  client.elements.get("#backup-name").value = "堤防づくりのあと";
+  client.elements.get("#create-backup").dispatchEvent(new Event("click"));
+  await new Promise(setImmediate);
+  assert.equal(client.elements.get("#backup-list").children.length, 2);
+
+  client.elements.get("#backup-list").children[0].children.at(-1).dispatchEvent(new Event("click"));
+  await new Promise(setImmediate);
+  assert.ok(calls.some(({ method, path }) => method === "PATCH" && path.endsWith("/work")));
+  assert.ok(calls.some(({ method, path }) => method === "POST" && path.endsWith("/backups")));
+  assert.ok(calls.some(({ method, path }) => method === "POST" && path.endsWith("/restore")));
+});
+
+test("ending a class closes participants but keeps the owner's room code and session", async () => {
+  let client;
+  client = createClient({
+    ownerSession: { roomCode: "ABCD23", ownerToken: "owner-secret" },
+    fetchImpl: async (url) => {
+      assert.match(String(url), /\/api\/rooms\/ABCD23\/end$/);
+      client.socket.close(4003, "Class ended; work saved");
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  client.welcome();
+  client.elements.get("#end-class").dispatchEvent(new Event("click"));
+  await new Promise(setImmediate);
+  assert.equal(client.sessions.has("moneycraft-room-owner-v1"), true);
+  assert.equal(client.elements.get("#room-share-code").textContent, "ABCD23");
+  assert.match(client.elements.get("#room-status").textContent, /作品は保存されています/);
 });

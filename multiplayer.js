@@ -5,7 +5,16 @@
   const joinButton = document.querySelector("#join-room");
   const leaveButton = document.querySelector("#leave-room");
   const closeButton = document.querySelector("#close-room");
+  const endClassButton = document.querySelector("#end-class");
   const recoveryButton = document.querySelector("#request-owner-recovery");
+  const workManagement = document.querySelector("#work-management");
+  const roomWorkName = document.querySelector("#room-work-name");
+  const workNameInput = document.querySelector("#work-name");
+  const saveWorkNameButton = document.querySelector("#save-work-name");
+  const backupNameInput = document.querySelector("#backup-name");
+  const createBackupButton = document.querySelector("#create-backup");
+  const backupList = document.querySelector("#backup-list");
+  const workManagementStatus = document.querySelector("#work-management-status");
   const recoveryStatus = document.querySelector("#recovery-status");
   const teacherEmailControls = document.querySelector("#teacher-email-controls");
   const teacherEmailInput = document.querySelector("#teacher-email");
@@ -39,6 +48,9 @@
   let worldReady = false;
   let renderedInviteCode = "";
   let pendingEmailAction = null;
+  let currentWorkName = "新しい作品";
+  let currentBackups = [];
+  let activePlayerCount = 0;
   const PROTOCOL_VERSION = 3;
   const players = new Map();
 
@@ -60,12 +72,15 @@
   function updateRoomDetails() {
     const hasRoom = Boolean(currentRoomCode);
     roomDetails.hidden = !hasRoom;
+    roomWorkName.textContent = currentWorkName;
     roomShareCode.textContent = currentRoomCode;
     updateRoomInvite();
     roomOwnerNote.textContent = isRoomOwner
-      ? "このブラウザーからワールドを閉じられます。復旧用の教員メールを登録できます。"
-      : "教員管理権限のある人だけがワールドを閉じられます";
+      ? "授業終了は保存されます。完全削除は取り消せません。"
+      : "教員権限があれば作品を管理できます。";
+    endClassButton.hidden = !isRoomOwner;
     closeButton.hidden = !isRoomOwner;
+    workManagement.hidden = !isRoomOwner;
     teacherEmailControls.hidden = !isRoomOwner;
     leaveButton.disabled = !activeSocket;
     renderRoster();
@@ -148,6 +163,7 @@
 
   function clearPlayers() {
     players.clear();
+    activePlayerCount = 0;
     localPlayerId = "";
     renderRoster();
   }
@@ -202,20 +218,45 @@
         return;
       }
       localPlayerId = welcome.player.id;
+      currentWorkName = typeof welcome.workName === "string" ? welcome.workName : "新しい作品";
       maxPlayers = welcome.maxPlayers;
       clearPlayers();
       localPlayerId = welcome.player.id;
       for (const player of welcome.players) players.set(player.id, player);
       players.set(welcome.player.id, welcome.player);
+      activePlayerCount = players.size;
       updateRoomDetails();
       setStatus(`「${welcome.player.displayName}」として入室しました。`, "connected");
       worldReady = true;
       emitRoomEvent("room-joined", welcome);
+      if (isRoomOwner) loadWorkManagement();
+      return;
+    }
+
+    if (packet.type === "work-renamed" && typeof packet.payload?.workName === "string") {
+      currentWorkName = packet.payload.workName;
+      updateRoomDetails();
+      return;
+    }
+
+    if (packet.type === "work-restore-start" && typeof packet.payload?.backupName === "string") {
+      setStatus(`教員が「${packet.payload.backupName}」を復元しています。`, "connecting");
+      return;
+    }
+
+    if (packet.type === "work-restore-cancelled") {
+      setStatus("バックアップを復元できませんでした。現在の作品は保持されています。", "error");
+      return;
+    }
+
+    if (packet.type === "work-restored" && typeof packet.payload?.backupName === "string") {
+      setStatus(`「${packet.payload.backupName}」を復元しました。`, "connected");
       return;
     }
 
     if (packet.type === "player-joined" && packet.payload?.id && packet.payload?.displayName) {
       players.set(packet.payload.id, packet.payload);
+      activePlayerCount = players.size;
       updateRoomDetails();
       setStatus(`${packet.payload.displayName} が参加しました。`, "connected");
       emitRoomEvent("player-joined", packet.payload);
@@ -225,6 +266,7 @@
     if (packet.type === "player-left" && packet.payload?.id) {
       const leaving = players.get(packet.payload.id);
       players.delete(packet.payload.id);
+      activePlayerCount = players.size;
       updateRoomDetails();
       if (leaving) setStatus(`${leaving.displayName} が退出しました。`, "connected");
       emitRoomEvent("player-left", packet.payload);
@@ -328,6 +370,9 @@
       } else if (event.code === 1000) {
         detail = "部屋から退出しました。";
         state = "disconnected";
+      } else if (event.code === 4003) {
+        detail = "授業が終了しました。作品は保存されています。同じ部屋コードで再開できます。";
+        state = "closed";
       } else {
         detail = "接続が切れました。部屋が開いていれば、部屋コードで再参加できます。";
         state = "disconnected";
@@ -393,6 +438,168 @@
     connectToRoom(roomCode);
   }
 
+  function getOwnerHeaders(ownerSession = readOwnerSession()) {
+    if (!ownerSession || ownerSession.roomCode !== currentRoomCode) return null;
+    return { "X-Room-Owner-Token": ownerSession.ownerToken };
+  }
+
+  async function loadWorkManagement() {
+    const ownerSession = readOwnerSession();
+    const headers = getOwnerHeaders(ownerSession);
+    if (!headers) return;
+    try {
+      const work = await requestJson(`/api/rooms/${currentRoomCode}/work`, { headers });
+      currentWorkName = work.workName;
+      currentBackups = work.backups;
+      activePlayerCount = work.activePlayers;
+      workNameInput.value = currentWorkName;
+      renderBackups();
+      updateRoomDetails();
+    } catch (error) {
+      console.error("Could not load work management data.", error);
+      workManagementStatus.textContent = `作品情報を読み込めませんでした: ${error.message}`;
+    }
+  }
+
+  function renderBackups() {
+    backupList.replaceChildren();
+    for (const backup of currentBackups) {
+      const item = document.createElement("li");
+      const description = document.createElement("span");
+      description.textContent = backup.name;
+      const created = document.createElement("time");
+      created.dateTime = new Date(backup.createdAt).toISOString();
+      created.textContent = new Date(backup.createdAt).toLocaleString("ja-JP");
+      const restoreButton = document.createElement("button");
+      restoreButton.className = "room-button";
+      restoreButton.type = "button";
+      restoreButton.textContent = "この状態に復元";
+      restoreButton.addEventListener("click", () => restoreBackup(backup));
+      item.append(description, created, restoreButton);
+      backupList.append(item);
+    }
+    if (!currentBackups.length) {
+      const empty = document.createElement("li");
+      empty.textContent = "バックアップはまだありません。";
+      backupList.append(empty);
+    }
+  }
+
+  async function saveWorkName() {
+    const headers = getOwnerHeaders();
+    const workName = workNameInput.value.trim();
+    if (!headers) {
+      workManagementStatus.textContent = "作成者として接続してから操作してください。";
+      return;
+    }
+    saveWorkNameButton.disabled = true;
+    try {
+      const result = await requestJson(`/api/rooms/${currentRoomCode}/work`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ workName }),
+      });
+      currentWorkName = result.workName;
+      workNameInput.value = currentWorkName;
+      updateRoomDetails();
+      workManagementStatus.textContent = "作品名を保存しました。";
+    } catch (error) {
+      console.error("Could not save work name.", error);
+      workManagementStatus.textContent = `作品名を保存できませんでした: ${error.message}`;
+    } finally {
+      saveWorkNameButton.disabled = false;
+    }
+  }
+
+  async function createBackup() {
+    const headers = getOwnerHeaders();
+    const name = backupNameInput.value.trim();
+    if (!headers) {
+      workManagementStatus.textContent = "作成者として接続してから操作してください。";
+      return;
+    }
+    if (!name) {
+      workManagementStatus.textContent = "バックアップ名を入力してください。";
+      backupNameInput.focus();
+      return;
+    }
+    const oldest = currentBackups[0];
+    if (currentBackups.length >= 10 && !window.confirm(
+      `保存上限は10件です。作成すると最古の「${oldest.name}」が削除されます。続けますか？`,
+    )) return;
+
+    createBackupButton.disabled = true;
+    try {
+      const result = await requestJson(`/api/rooms/${currentRoomCode}/backups`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      currentBackups = result.backups;
+      backupNameInput.value = "";
+      renderBackups();
+      workManagementStatus.textContent = result.removedBackup
+        ? `バックアップを作成し、最古の「${result.removedBackup.name}」を削除しました。`
+        : `「${result.backup.name}」を保存しました。`;
+    } catch (error) {
+      console.error("Could not create a work backup.", error);
+      workManagementStatus.textContent = `バックアップを作成できませんでした: ${error.message}`;
+    } finally {
+      createBackupButton.disabled = false;
+    }
+  }
+
+  async function restoreBackup(backup) {
+    const headers = getOwnerHeaders();
+    if (!headers) {
+      workManagementStatus.textContent = "作成者として接続してから操作してください。";
+      return;
+    }
+    const oldest = currentBackups[0];
+    const retentionWarning = currentBackups.length >= 10
+      ? `復元前の作品状態は自動バックアップとして保存されます。その際、最古の「${oldest.name}」が削除されます。`
+      : "復元前の現在状態も自動バックアップとして保存します。";
+    const time = new Date(backup.createdAt).toLocaleString("ja-JP");
+    if (!window.confirm(
+      `「${backup.name}」（${time}）に復元しますか？参加者${activePlayerCount}人の画面が置き換わります。\n${retentionWarning}`,
+    )) return;
+
+    workManagementStatus.textContent = "参加者へ通知し、バックアップを復元しています…";
+    try {
+      const result = await requestJson(
+        `/api/rooms/${currentRoomCode}/backups/${backup.id}/restore`,
+        { method: "POST", headers },
+      );
+      currentBackups = result.backups;
+      renderBackups();
+      workManagementStatus.textContent = `「${backup.name}」を復元しました。復元前の状態もバックアップに保存しました。`;
+    } catch (error) {
+      console.error("Could not restore a work backup.", error);
+      workManagementStatus.textContent = `復元できませんでした。現在の作品は保持されています: ${error.message}`;
+    }
+  }
+
+  async function endClass() {
+    const headers = getOwnerHeaders();
+    if (!headers) {
+      setStatus("このブラウザーには授業を終了する権限がありません。", "error");
+      return;
+    }
+    if (!window.confirm(
+      `「${currentWorkName}」の授業を終了しますか？参加者${activePlayerCount}人を退出させますが、作品とバックアップは保存されます。`,
+    )) return;
+    endClassButton.disabled = true;
+    try {
+      await requestJson(`/api/rooms/${currentRoomCode}/end`, { method: "POST", headers });
+      setStatus("授業を終了しました。作品は保存されています。同じ部屋コードで再開できます。", "closed");
+    } catch (error) {
+      console.error("Could not end the class while preserving its work.", error);
+      setStatus(`授業を終了できませんでした: ${error.message}`, "error");
+    } finally {
+      endClassButton.disabled = false;
+    }
+  }
+
   function leaveRoom() {
     if (!activeSocket) return;
     const socket = activeSocket;
@@ -411,7 +618,14 @@
       setStatus("このブラウザーには部屋を閉じる権限がありません。", "error");
       return;
     }
-    if (!window.confirm("このワールドを閉じますか？参加者全員が退出し、ワールドは削除されます。")) return;
+    if (!window.confirm(
+      `「${currentWorkName}」を完全削除しますか？ライブ作品とすべてのバックアップが消え、復元できません。`,
+    )) return;
+    const confirmation = window.prompt(`完全削除を確認するため、作品名「${currentWorkName}」を入力してください。`);
+    if (confirmation?.trim() !== currentWorkName) {
+      setStatus("作品名が一致しないため、削除を中止しました。", "idle");
+      return;
+    }
 
     setButtonsDisabled(true);
     try {
@@ -425,6 +639,8 @@
         socket.close(1000, "Room closed by owner");
       }
       currentRoomCode = "";
+      currentWorkName = "新しい作品";
+      currentBackups = [];
       worldReady = false;
       clearPlayers();
       clearOwnerSession();
@@ -560,9 +776,12 @@
   function setButtonsDisabled(disabled) {
     createButton.disabled = disabled;
     joinButton.disabled = disabled;
+    endClassButton.disabled = disabled;
     closeButton.disabled = disabled;
     recoveryButton.disabled = disabled;
     teacherEmailButton.disabled = disabled;
+    saveWorkNameButton.disabled = disabled;
+    createBackupButton.disabled = disabled;
   }
 
   roomCodeInput.addEventListener("input", () => {
@@ -574,7 +793,10 @@
   createButton.addEventListener("click", createRoom);
   joinButton.addEventListener("click", joinRoom);
   leaveButton.addEventListener("click", leaveRoom);
+  endClassButton.addEventListener("click", endClass);
   closeButton.addEventListener("click", closeRoom);
+  saveWorkNameButton.addEventListener("click", saveWorkName);
+  createBackupButton.addEventListener("click", createBackup);
   recoveryButton.addEventListener("click", requestOwnerRecovery);
   teacherEmailButton.addEventListener("click", registerTeacherEmail);
   confirmEmailActionButton.addEventListener("click", completeEmailAction);

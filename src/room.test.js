@@ -24,6 +24,7 @@ function createContext() {
     storage: {
       async get(key) { return structuredClone(data.get(key)); },
       async put(key, value) { data.set(key, structuredClone(value)); },
+      async delete(key) { return data.delete(key); },
       async deleteAll() { data.clear(); },
       async transaction(callback) {
         const before = structuredClone(data);
@@ -157,6 +158,118 @@ test("only the owner can close and delete the shared world", async () => {
   assert.equal(socket.closeCode, 4001);
   assert.equal(await ctx.storage.get("world"), undefined);
   assert.equal((await room.fetch(new Request("https://room.internal/connect"))).status, 404);
+});
+
+test("work metadata is owner-only and class end preserves the room and world", async () => {
+  const { ctx, room } = await setupRoom();
+  const socket = addPlayer(ctx);
+  const request = (path, method, token, body) => room.fetch(new Request(`https://room.internal${path}`, {
+    method,
+    headers: {
+      "X-Room-Owner-Token": token,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }));
+
+  assert.equal((await request("/internal/work", "GET", "wrong")).status, 403);
+  assert.equal((await request("/internal/work", "PATCH", "a".repeat(32), { workName: "  " })).status, 400);
+  const renamed = await request("/internal/work", "PATCH", "a".repeat(32), { workName: "命山のある町" });
+  assert.equal(renamed.status, 200);
+  assert.equal((await ctx.storage.get("room")).workName, "命山のある町");
+  assert.equal(socket.messages.at(-1).type, "work-renamed");
+
+  const ended = await request("/internal/end-class", "POST", "a".repeat(32));
+  assert.equal(ended.status, 200);
+  assert.equal(socket.closeCode, 4003);
+  assert.ok(await ctx.storage.get("room"));
+  assert.ok(await ctx.storage.get("world"));
+  assert.equal((await request("/internal/work", "GET", "a".repeat(32))).status, 200);
+});
+
+test("named backups retain the latest ten and restore protects the replaced live world", async () => {
+  const { ctx, room } = await setupRoom();
+  const ownerHeaders = {
+    "Content-Type": "application/json",
+    "X-Room-Owner-Token": "a".repeat(32),
+  };
+  const createBackup = (name) => room.fetch(new Request("https://room.internal/internal/backups", {
+    method: "POST",
+    headers: ownerHeaders,
+    body: JSON.stringify({ name }),
+  }));
+
+  const first = await (await createBackup("checkpoint-0")).json();
+  for (let index = 1; index < 10; index += 1) {
+    const result = await createBackup(`checkpoint-${index}`);
+    assert.equal(result.status, 201);
+  }
+  assert.equal((await ctx.storage.get("backups")).length, 10);
+  const eleventhResponse = await createBackup("checkpoint-10");
+  assert.equal(eleventhResponse.status, 201);
+  const eleventh = await eleventhResponse.json();
+  assert.equal(eleventh.removedBackup.name, "checkpoint-0");
+  assert.equal((await ctx.storage.get("backups")).length, 10);
+  assert.equal(await ctx.storage.get(`backup-${first.backup.id}-part-0`), undefined);
+
+  const baseBackup = (await ctx.storage.get("backups")).find(({ name }) => name === "checkpoint-1");
+  const model = globalThis.MoneycraftWorld.createModel(WORLD_DIMENSIONS);
+  const live = await room.getWorldSnapshot(123);
+  assert.equal(model.load(live.world), true);
+  assert.equal(model.setBlock(12, 16, 10, 7), true);
+  await room.saveWorldSnapshot({ world: model.serialize(), revision: live.revision + 1 });
+  const currentBeforeRestore = await room.getWorldSnapshot(123);
+  const socket = addPlayer(ctx);
+
+  const restoredResponse = await room.fetch(new Request("https://room.internal/internal/backups/restore", {
+    method: "POST",
+    headers: ownerHeaders,
+    body: JSON.stringify({ backupId: baseBackup.id }),
+  }));
+  assert.equal(restoredResponse.status, 200);
+  const restoredResult = await restoredResponse.json();
+  const restored = await room.getWorldSnapshot(123);
+  assert.equal(restored.revision, currentBeforeRestore.revision + 1);
+  assert.equal(restored.world.blocks[(16 * WORLD_DIMENSIONS.depth + 10) * WORLD_DIMENSIONS.width + 12], 0);
+  assert.equal(socket.messages.some(({ type }) => type === "work-restore-start"), true);
+  assert.equal(socket.messages.some(({ type }) => type === "world-snapshot"), true);
+  assert.equal(socket.messages.at(-1).type, "work-restored");
+  const automatic = (await ctx.storage.get("backups")).find(({ id }) =>
+    restoredResult.backups.some((listed) => listed.id === id && listed.name === "復元前の自動保存"));
+  assert.ok(automatic);
+  const protectedLive = await room.readBackupSnapshot(automatic);
+  assert.equal(protectedLive.world.blocks[(16 * WORLD_DIMENSIONS.depth + 10) * WORLD_DIMENSIONS.width + 12], 7);
+});
+
+test("failed backup restore leaves the live world and backup list unchanged", async () => {
+  const { ctx, room } = await setupRoom();
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Room-Owner-Token": "a".repeat(32),
+  };
+  const backupResponse = await room.fetch(new Request("https://room.internal/internal/backups", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "保存済み" }),
+  }));
+  const { backup } = await backupResponse.json();
+  const before = await room.getWorldSnapshot(123);
+  const socket = addPlayer(ctx);
+  const put = ctx.storage.put.bind(ctx.storage);
+  ctx.storage.put = async (key, value) => {
+    if (key === "world") throw new Error("storage unavailable");
+    return put(key, value);
+  };
+
+  const result = await room.fetch(new Request("https://room.internal/internal/backups/restore", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ backupId: backup.id }),
+  }));
+  assert.equal(result.status, 503);
+  assert.deepEqual(await room.getWorldSnapshot(123), before);
+  assert.deepEqual((await ctx.storage.get("backups")).map(({ id }) => id), [backup.id]);
+  assert.equal(socket.messages.at(-1).type, "work-restore-cancelled");
 });
 
 test("teacher email verification and recovery rotate owner credentials exactly once", async () => {

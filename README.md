@@ -79,6 +79,16 @@ server processing order and compare the expected block before applying.
 Clients request a fresh snapshot on revision gaps, conflicts, or edit timeouts.
 Only edited chunks and their affected neighbors are rebuilt.
 
+Each room is a persistent work. Owners can give it a name, create up to ten
+named backups, and restore one after confirming that participants' worlds will
+be replaced. A restore first saves the current live world as a recovery backup
+and broadcasts the restored snapshot to connected participants. At the ten
+backup limit, the UI warns before the oldest backup is removed. **End class**
+disconnects everyone but preserves the room, work, and backups for later use
+with the same room code. **Permanently delete** is a separate owner-only action
+that requires typing the work name and removes the live work and every backup.
+Leaving a room still exits only the current participant.
+
 The sixteen-player Worker and matching client were published on 2026-11-02.
 Reload participating browsers to receive the updated client;
 the protocol version and existing worlds remain unchanged.
@@ -108,10 +118,9 @@ New room snapshots are stored as metadata plus 8,192-cell binary parts, each
 well below the per-value storage limit. Block edits atomically update one part
 and its revision; older single-value snapshots migrate without altering their
 buildings on the next accepted edit. Missing or corrupt parts fail explicitly
-instead of regenerating the terrain. Worlds survive disconnects and Worker
-restarts until the owner closes the room, which deletes the shared world.
-Keep the room code to resume; no export, reopening of closed rooms, or
-automatic room expiry is implemented.
+instead of regenerating the terrain. Works and backups survive disconnects,
+class end, and Worker restarts until the owner permanently deletes the work.
+Keep the room code to resume; no export or automatic room expiry is implemented.
 
 ## Teacher recovery email
 

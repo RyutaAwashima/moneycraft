@@ -149,6 +149,72 @@ test("recovery requires an allowed same-origin return URL and a registered owner
   assert.equal(badOrigin.status, 403);
 });
 
+test("owner save-management routes protect work, backups, restore, class end, and deletion", async () => {
+  const ROOMS = createRoomNamespace();
+  const env = { ROOMS, ALLOWED_ORIGINS: "https://example.test" };
+  const preflight = await worker.fetch(new Request("https://worker.test/api/rooms/ABCD23/work", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://example.test",
+      "Access-Control-Request-Method": "PATCH",
+      "Access-Control-Request-Headers": "content-type,x-room-owner-token",
+    },
+  }), env);
+  assert.equal(preflight.status, 204);
+  assert.match(preflight.headers.get("Access-Control-Allow-Methods"), /PATCH/);
+
+  const created = await (await worker.fetch(request("/api/rooms"), env)).json();
+  const ownerHeaders = { "X-Room-Owner-Token": created.ownerToken };
+
+  const denied = await worker.fetch(request(`/api/rooms/${created.roomCode}/work`, {
+    method: "GET",
+  }), env);
+  assert.equal(denied.status, 403);
+
+  const renamed = await worker.fetch(request(`/api/rooms/${created.roomCode}/work`, {
+    method: "PATCH",
+    body: { workName: "避難できる町" },
+    headers: ownerHeaders,
+  }), env);
+  assert.equal(renamed.status, 200);
+  assert.equal((await renamed.json()).workName, "避難できる町");
+
+  const backupResponse = await worker.fetch(request(`/api/rooms/${created.roomCode}/backups`, {
+    body: { name: "はじめの状態" },
+    headers: ownerHeaders,
+  }), env);
+  assert.equal(backupResponse.status, 201);
+  const { backup } = await backupResponse.json();
+  const listed = await worker.fetch(request(`/api/rooms/${created.roomCode}/backups`, {
+    method: "GET",
+    headers: ownerHeaders,
+  }), env);
+  assert.equal((await listed.json()).backups[0].id, backup.id);
+
+  const restored = await worker.fetch(request(
+    `/api/rooms/${created.roomCode}/backups/${backup.id}/restore`,
+    { headers: ownerHeaders },
+  ), env);
+  assert.equal(restored.status, 200);
+  assert.equal((await restored.json()).ok, true);
+
+  const ended = await worker.fetch(request(`/api/rooms/${created.roomCode}/end`, {
+    headers: ownerHeaders,
+  }), env);
+  assert.equal(ended.status, 200);
+  const room = ROOMS.get(created.roomCode);
+  assert.ok(await room.ctx.storage.get("room"));
+  assert.ok((await room.ctx.storage.get("backups")).length >= 1);
+
+  const deleted = await worker.fetch(request(`/api/rooms/${created.roomCode}`, {
+    method: "DELETE",
+    headers: ownerHeaders,
+  }), env);
+  assert.equal(deleted.status, 200);
+  assert.equal(await room.ctx.storage.get("room"), undefined);
+  assert.equal(await room.ctx.storage.get("backups"), undefined);
+});
+
 test("global rate limits cap requests per source and recipient across room codes", async () => {
   const env = {
     ROOMS: createRoomNamespace(),

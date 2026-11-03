@@ -19,7 +19,7 @@ function corsHeaders(request, env) {
   if (!origin || !allowedOrigins(env).has(origin)) return {};
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Room-Owner-Token",
     "Access-Control-Max-Age": "600",
     Vary: "Origin",
@@ -222,7 +222,7 @@ function getRoomStub(env, code) {
 }
 
 function routeRoomPath(pathname) {
-  const match = pathname.match(/^\/api\/rooms\/([A-HJ-NP-Z2-9]{6})(?:\/(connect|teacher-email(?:\/verify)?|recovery(?:\/consume)?))?$/);
+  const match = pathname.match(/^\/api\/rooms\/([A-HJ-NP-Z2-9]{6})(?:\/(connect|teacher-email(?:\/verify)?|recovery(?:\/consume)?|work|backups(?:\/[a-f0-9]{24}\/restore)?|end))?$/);
   if (!match || !ROOM_CODE_PATTERN.test(match[1])) return null;
   return { code: match[1], action: match[2] ?? "room" };
 }
@@ -266,6 +266,37 @@ export default {
         method: "POST",
         headers: { "X-Room-Owner-Token": request.headers.get("X-Room-Owner-Token") || "" },
       })).then(async (response) => jsonResponse(await response.json(), response.status, headers));
+    }
+    if (roomRoute.action === "work" && ["GET", "PATCH"].includes(request.method)) {
+      let body;
+      if (request.method === "PATCH") {
+        try {
+          body = await readJson(request);
+        } catch (error) {
+          return jsonResponse({ error: error.message }, error.message === "request_too_large" ? 413 : 400, headers);
+        }
+      }
+      return forwardOwnerRequest(stub, "/internal/work", request, headers, body);
+    }
+    if (roomRoute.action === "backups" && request.method === "GET") {
+      return forwardOwnerRequest(stub, "/internal/backups", request, headers);
+    }
+    if (roomRoute.action === "backups" && request.method === "POST") {
+      let body;
+      try {
+        body = await readJson(request);
+      } catch (error) {
+        return jsonResponse({ error: error.message }, error.message === "request_too_large" ? 413 : 400, headers);
+      }
+      return forwardOwnerRequest(stub, "/internal/backups", request, headers, body);
+    }
+    if (roomRoute.action.startsWith("backups/") && request.method === "POST") {
+      const backupId = roomRoute.action.match(/^backups\/([a-f0-9]{24})\/restore$/)?.[1];
+      if (!backupId) return jsonResponse({ error: "not_found" }, 404, headers);
+      return forwardOwnerRequest(stub, "/internal/backups/restore", request, headers, { backupId });
+    }
+    if (roomRoute.action === "end" && request.method === "POST") {
+      return forwardOwnerRequest(stub, "/internal/end-class", request, headers);
     }
     if (request.method === "POST" && roomRoute.action === "teacher-email") {
       let body;
@@ -394,6 +425,21 @@ export default {
     return jsonResponse({ error: "method_not_allowed" }, 405, headers);
   },
 };
+
+async function forwardOwnerRequest(stub, pathname, request, headers, body) {
+  const response = await stub.fetch(new Request(`https://room.internal${pathname}`, {
+    method: request.method,
+    headers: {
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      "X-Room-Owner-Token": request.headers.get("X-Room-Owner-Token") || "",
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }));
+  return jsonResponse(await response.json(), response.status, {
+    ...headers,
+    "Cache-Control": "no-store",
+  });
+}
 
 async function handleInternalJson(stub, pathname, request, headers) {
   let body;

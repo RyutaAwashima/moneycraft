@@ -53,9 +53,11 @@
           <button class="room-button" id="cancel-email-action" type="button">キャンセル</button>
           <span id="email-action-status" role="status" aria-live="polite"></span>
         </div>
-        <p class="multiplayer-note">同じ部屋では建築とプレイヤーの位置を共有します。建築は作成者が部屋を閉じるまでサーバーに保存されます。退出後は元のひとり用ワールドに戻ります。</p>
+        <p class="multiplayer-note">同じ部屋では建築とプレイヤーの位置を共有します。作品は教員が完全削除するまでサーバーに保存されます。退出後は元のひとり用ワールドに戻ります。</p>
         <div class="room-details" id="room-details" hidden>
           <div class="room-share">
+            <span>作品名</span>
+            <strong id="room-work-name">新しい作品</strong>
             <span>友だちにこのコードを共有</span>
             <strong id="room-share-code"></strong>
             <img class="room-qr" id="room-qr" width="196" height="196" alt="部屋に参加するためのQRコード" hidden>
@@ -71,7 +73,24 @@
           <div class="room-management">
             <span id="room-owner-note"></span>
             <button class="room-button room-leave" id="leave-room" type="button">退出</button>
-            <button class="room-button room-close" id="close-room" type="button" hidden>ワールドを閉じる</button>
+            <button class="room-button" id="end-class" type="button" hidden>授業を終了（保存）</button>
+            <button class="room-button room-close" id="close-room" type="button" hidden>作品を完全削除</button>
+          </div>
+          <div class="work-management" id="work-management" hidden>
+            <h3>作品の保存・管理</h3>
+            <label for="work-name">作品名を変更</label>
+            <div class="work-management-actions">
+              <input id="work-name" type="text" maxlength="80" autocomplete="off">
+              <button class="room-button" id="save-work-name" type="button">名前を保存</button>
+            </div>
+            <label for="backup-name">名前付きバックアップ</label>
+            <div class="work-management-actions">
+              <input id="backup-name" type="text" maxlength="80" autocomplete="off" placeholder="例：堤防づくりのあと">
+              <button class="room-button" id="create-backup" type="button">バックアップを作成</button>
+            </div>
+            <p class="backup-note">最新10件を保持します。11件目を作ると最古のバックアップが削除されます。</p>
+            <ul class="backup-list" id="backup-list"></ul>
+            <span id="work-management-status" role="status" aria-live="polite"></span>
           </div>
           <div class="teacher-email-controls" id="teacher-email-controls" hidden>
             <label for="teacher-email">教員のメールアドレス（確認が必要）</label>
