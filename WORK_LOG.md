@@ -387,4 +387,5 @@
 - Workerを本番デプロイし、health checkでprotocol v3を確認。
 - ユーザー承認のもと、本番Worker経由でテストメールを送信。受信確認済み。
   テスト用の一時部屋は作成後に削除。DNS・MX変更なし。
-- 教員メールUIのGitHub Pages公開は未完了。
+- 教員メールUIをcommit `3252200`でmainへpush。Pages run `41559620573`成功。
+  公開ページを再読み込みし、教員権限の復旧メールUIが表示されることを確認。

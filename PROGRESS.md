@@ -24,7 +24,7 @@
   最終検証は58テスト成功、構文チェック・差分チェック・Worker dry-run成功。
   GASプロジェクトとWorker secretsを設定し、Workerを本番デプロイ済み。
   承認済み宛先へのテストメール受信を確認。DNS・MX変更なし。
-  教員メールUIのGitHub Pages公開は作業中。
+  教員メールUIをGitHub Pagesへ公開済み。画面更新で利用可能。
   Cloudflare Email Service用の親zone移管は未承認・未実施。
   詳細と未決定事項は [`ROADMAP.md`](./ROADMAP.md) を参照。
   建築課題・ビジュアル・サウンド・ライドは計画で未実装。作品の保存・管理機能も一部未実装。
