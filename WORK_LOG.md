@@ -400,4 +400,7 @@
   完全削除は作成者権限に加え、作品名の再入力を要求する。
 - `PATCH` CORS preflight、メタデータ権限、10件保持、復元前保護、失敗時ロールバック、UI操作をテスト。
   全64テスト成功、構文・差分チェック・Worker dry-run成功。
-- 本番Worker/Pagesへのデプロイと授業での再開・復元実地確認は未実施。
+- Worker version `e0fefabd-3280-46f9-aafe-c5be6240be8c`を本番デプロイ。health checkはprotocol v3、
+  `PATCH` CORS preflightはHTTP 204で成功。
+- `250413f`をmainへpushし、Pages run `41561499459`成功。公開HTMLで作品管理・授業終了・バックアップUIの反映を確認。
+- 既存の本番作品には操作していない。授業での終了・再開・バックアップ復元の実地確認は未実施。
