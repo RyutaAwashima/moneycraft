@@ -4,6 +4,12 @@
   const canvas = document.querySelector("#game");
   const gl = canvas.getContext("webgl", { antialias: true, alpha: false });
   const hotbar = document.querySelector("#hotbar");
+  const blockPicker = document.querySelector("#block-picker");
+  const blockOptions = document.querySelector("#block-options");
+  const blockPickerTitle = document.querySelector("#block-picker-title");
+  const blockCandidate = document.querySelector("#block-candidate");
+  const chooseBlock = document.querySelector("#choose-block");
+  const selectionStatus = document.querySelector("#block-selection-status");
   const selectedBlockName = document.querySelector("#selected-block-name");
   const message = document.querySelector("#game-message");
   const debugIndicator = document.querySelector("#debug-indicator");
@@ -216,6 +222,7 @@
 
   const SAVE_KEY = "moneycraft-3d-world-v2";
   const AUDIO_SETTINGS_KEY = "moneycraft-audio-settings-v1";
+  const BLOCK_SELECTION_KEY = "moneycraft-block-selection-v1";
   const AMBIENT_CHIRP_INTERVAL_MS = 15000;
   const FRAME_SAMPLE_CAPACITY = 120;
   const PLAYER_HEIGHT = 1.7;
@@ -223,13 +230,18 @@
   const PLAYER_STATE_INTERVAL_MS = 100;
   const REMOTE_PLAYER_TIMEOUT = 5000;
   const REACH = 6;
-  const GRAVITY = 19;
+  const GRAVITY = 20.9475;
   const JUMP_SPEED = 7.8;
   const FLIGHT_SPEED = 4.5;
   const DOUBLE_JUMP_MS = 300;
+  const DOUBLE_FORWARD_MS = 300;
+  const SPRINT_MULTIPLIER = 1.5;
   const CONTINUOUS_EDIT_INTERVAL_MS = 200;
   const CONTINUOUS_EDIT_RETRY_MS = 50;
   const blocks = globalThis.MoneycraftWorld.blocks;
+  const { getBlockBounds, getBlockBoxes, getStairOutline, orientationFromFacing,
+    slabOrientationForPlacement, canMergeSlab, upperSlabOrientation,
+    stairShapes, shapeAffectedCells, isBlockOrientation } = globalThis.MoneycraftWorld;
   let worldModel = globalThis.MoneycraftWorld.createModel(globalThis.MoneycraftWorld.defaultOptions);
   const keys = new Set();
   const touchPointers = new Map();
@@ -242,6 +254,8 @@
   let soundMuted = true;
   let soundVolumeLevel = 0.35;
   let lastJumpTime = -Infinity;
+  let lastForwardTime = -Infinity;
+  let doubleTapSprint = false;
   let expanded = false;
   const frameTimeSamples = new Float64Array(FRAME_SAMPLE_CAPACITY);
   let frameTimeSampleCount = 0;
@@ -265,9 +279,24 @@
   ];
 
   let player = { x: 20.5, y: 0, z: 29.5, velocityY: 0, grounded: false, yaw: 0, pitch: -0.12 };
+  let stepViewOffset = 0;
+  const STEP_VIEW_RESPONSE = 20;
   const remotePlayers = new Map();
   const remotePlayerLabelElements = new Map();
   let selectedBlock = 1;
+  const blockCategories = [
+    { id: "nature", name: "自然・地形", blocks: [1, 2, 3, 4, 5] },
+    { id: "building", name: "基本建材", blocks: [6, 7, 8] },
+    { id: "stairs", name: "階段", blocks: [17] },
+    { id: "slabs", name: "ハーフ", blocks: [16] },
+    { id: "glass", name: "窓・ガラス", blocks: [9] },
+    { id: "colors", name: "色付き", blocks: [10, 11, 12, 13, 14, 15] },
+  ];
+  const categorySelections = new Map(blockCategories.map((category) => [category.id, category.blocks[0]]));
+  let selectedCategory = 0;
+  let pickerOpen = false;
+  let candidateBlock = selectedBlock;
+  let lastSelectionWheel = -Infinity;
   let program;
   let avatarPositionBuffer;
   let avatarColorBuffer;
@@ -280,6 +309,10 @@
   let atlasCanvas;
   const CHUNK_SIZE = 8;
   const chunkMeshes = new Map();
+  let transparentMesh;
+  let transparentFaces = [];
+  let transparentMeshDirty = true;
+  let transparentView = "";
   const TARGET_OUTLINE_EDGES = [
     [0, 1], [1, 2], [2, 3], [3, 0],
     [4, 5], [5, 6], [6, 7], [7, 4],
@@ -289,6 +322,12 @@
   const targetColors = new Float32Array(72);
   for (let index = 0; index < targetColors.length; index += 3) {
     targetColors.set([1, 0.78, 0.16], index);
+  }
+  const stairOutlineSize = Math.max(...stairShapes.map((shape) => getStairOutline(0, shape).length)) * 6;
+  const stairTargetPositions = new Float32Array(stairOutlineSize);
+  const stairTargetColors = new Float32Array(stairOutlineSize);
+  for (let index = 0; index < stairTargetColors.length; index += 3) {
+    stairTargetColors.set([1, 0.78, 0.16], index);
   }
   let lastTime = 0;
   let saveTimer = 0;
@@ -367,6 +406,7 @@
       throw new Error("Could not restore the solo world.");
     }
     player = { ...soloSnapshot.player };
+    stepViewOffset = 0;
     clearInput();
     updateFlightControls();
     soloSnapshot = null;
@@ -425,16 +465,19 @@
     if (!edit || !Number.isSafeInteger(edit.revision) || edit.revision < 1
       || typeof edit.requestId !== "string" || typeof edit.playerId !== "string"
       || !inBounds(edit.x, edit.y, edit.z) || !Number.isInteger(edit.block)
-      || edit.block < 0 || edit.block > blocks.length) {
+      || edit.block < 0 || edit.block > blocks.length
+      || !isBlockOrientation(edit.block, edit.orientation)) {
       invalidWorldMessage();
       return;
     }
     if (awaitingSnapshot || edit.revision <= worldRevision) return;
-    if (edit.revision !== worldRevision + 1 || getBlock(edit.x, edit.y, edit.z) !== edit.expectedBlock) {
+    if (edit.revision !== worldRevision + 1 || getBlock(edit.x, edit.y, edit.z) !== edit.expectedBlock
+      || (edit.block === 6 && edit.expectedBlock === 16
+        && worldModel.getOrientation(edit.x, edit.y, edit.z) !== edit.expectedOrientation)) {
       requestWorldSnapshot();
       return;
     }
-    setBlock(edit.x, edit.y, edit.z, edit.block);
+    setBlock(edit.x, edit.y, edit.z, edit.block, edit.orientation);
     worldRevision = edit.revision;
     updateWorldMesh(edit.x, edit.y, edit.z);
     if (pendingEdits.has(edit.requestId)) {
@@ -461,16 +504,22 @@
       rate_limited: "操作が速すぎます。少し待ってください",
       out_of_reach: "置きたい・掘りたい場所に近づいてください",
       edit_conflict: "ほかの人が先に変更しました。再同期します",
-      player_in_block: "プレイヤーがいる場所には置けません",
+      player_in_block: "形が変わる場所にプレイヤーがいるため変更できません",
       room_closed: "部屋が閉じられました",
     };
     message.textContent = reasons[rejection.code] || `建築の変更が拒否されました: ${rejection.code}`;
     if (rejection.code === "edit_conflict") requestWorldSnapshot();
   }
 
-  function changeBlock(x, y, z, block) {
+  function changeBlock(x, y, z, block, orientation = 0) {
     if (roomMode === "connecting" || awaitingSnapshot) {
       message.textContent = "共有ワールドの読み込み完了を待ってください";
+      return false;
+    }
+    if (worldModel.editIntersectsBox({ x, y, z, block, orientation },
+      [player.x - PLAYER_RADIUS, player.y, player.z - PLAYER_RADIUS],
+      [player.x + PLAYER_RADIUS, player.y + PLAYER_HEIGHT, player.z + PLAYER_RADIUS])) {
+      message.textContent = "形が変わる場所にプレイヤーがいるため変更できません";
       return false;
     }
     prepareAudioForInteraction();
@@ -482,10 +531,14 @@
       }, 5000));
       message.textContent = "建築の変更を送信中";
       sendCurrentPlayerState();
-      emitWorldEvent("send-block-edit", { requestId, x, y, z, block, expectedBlock: getBlock(x, y, z) });
+      emitWorldEvent("send-block-edit", {
+        requestId, x, y, z, block, orientation, expectedBlock: getBlock(x, y, z),
+        ...(block === 6 && getBlock(x, y, z) === 16
+          ? { expectedOrientation: worldModel.getOrientation(x, y, z) } : {}),
+      });
       return true;
     }
-    setBlock(x, y, z, block);
+    setBlock(x, y, z, block, orientation);
     updateWorldMesh(x, y, z);
     saveGame();
     playBlockSound(block);
@@ -501,8 +554,8 @@
     return worldModel.getBlock(x, y, z);
   }
 
-  function setBlock(x, y, z, block) {
-    return worldModel.setBlock(x, y, z, block);
+  function setBlock(x, y, z, block, orientation = 0) {
+    return worldModel.setBlock(x, y, z, block, orientation);
   }
 
   function compileShader(type, source) {
@@ -564,8 +617,15 @@
     avatarColorBuffer = gl.createBuffer();
     targetPositionBuffer = gl.createBuffer();
     targetColorBuffer = gl.createBuffer();
+    transparentMesh = {
+      position: gl.createBuffer(), color: gl.createBuffer(), uv: gl.createBuffer(), count: 0,
+      positions: new Float32Array(0), colors: new Float32Array(0), uvs: new Float32Array(0),
+    };
     if (!avatarPositionBuffer || !avatarColorBuffer || !targetPositionBuffer || !targetColorBuffer) {
       throw new Error("Could not create world rendering buffers.");
+    }
+    if (!transparentMesh.position || !transparentMesh.color || !transparentMesh.uv) {
+      throw new Error("Could not create transparent rendering buffers.");
     }
     initializeTextures();
   }
@@ -577,7 +637,8 @@
     const context = atlasCanvas.getContext("2d");
     if (!context) throw new Error("Could not create block texture canvas.");
     for (let tile = 0; tile < blocks.length + 2; tile += 1) {
-      const id = tile < blocks.length ? tile + 1 : tile === blocks.length ? 2 : 4;
+      const material = tile < blocks.length ? blocks[tile] : null;
+      const id = material ? material.textureBlock ?? material.id : tile === blocks.length ? 2 : 4;
       const base = blocks[id - 1].color.map((channel) => Math.round(channel * 255));
       for (let y = 0; y < 16; y += 1) {
         for (let x = 0; x < 16; x += 1) {
@@ -604,7 +665,9 @@
             const ring = Math.floor(Math.hypot(x - 7.5, y - 7.5)) % 3 === 0 ? -28 : 12;
             color = base.map((channel) => channel + ring + noise * 0.3);
           }
-          context.fillStyle = `rgb(${color.map((channel) => Math.max(0, Math.min(255, Math.round(channel)))).join(",")})`;
+          const alpha = id === 9 && x !== 0 && y !== 0 && x !== 15 && y !== 15 && x !== 7 && y !== 7
+            ? 0.22 : 1;
+          context.fillStyle = `rgba(${color.map((channel) => Math.max(0, Math.min(255, Math.round(channel)))).join(",")},${alpha})`;
           context.fillRect(tile * 16 + x, y, 1, 1);
         }
       }
@@ -688,6 +751,7 @@
   }
 
   function rebuildWorldMesh() {
+    transparentMeshDirty = true;
     const { width, depth, height } = worldModel.dimensions;
     for (const [key, mesh] of chunkMeshes) {
       const [x, y, z] = key.split(",").map(Number);
@@ -704,38 +768,112 @@
 
   function updateWorldMesh(x, y, z) {
     const chunks = new Map();
-    for (const offset of [[0, 0, 0], ...faces.map((face) => face.neighbor)]) {
-      const cell = [x + offset[0], y + offset[1], z + offset[2]];
-      if (!inBounds(...cell)) continue;
-      const start = cell.map((value) => Math.floor(value / CHUNK_SIZE) * CHUNK_SIZE);
-      chunks.set(start.join(","), start);
+    for (const affected of shapeAffectedCells(x, y, z)) {
+      if ((affected[0] !== x || affected[2] !== z) && getBlock(...affected) !== 17) continue;
+      for (const offset of [[0, 0, 0], ...faces.map((face) => face.neighbor)]) {
+        const cell = affected.map((value, axis) => value + offset[axis]);
+        if (!inBounds(...cell)) continue;
+        const start = cell.map((value) => Math.floor(value / CHUNK_SIZE) * CHUNK_SIZE);
+        chunks.set(start.join(","), start);
+      }
     }
     for (const start of chunks.values()) rebuildChunk(...start);
+  }
+
+  function visibleFaceBounds(bounds, neighbor, normal) {
+    if (!neighbor) return [bounds];
+    const axis = normal.findIndex((value) => value !== 0);
+    const positive = normal[axis] > 0;
+    if ((positive ? bounds.max[axis] : bounds.min[axis])
+      !== (positive ? neighbor.min[axis] : neighbor.max[axis])) return [bounds];
+    const [u, v] = [0, 1, 2].filter((value) => value !== axis);
+    const minU = Math.max(bounds.min[u], neighbor.min[u]);
+    const maxU = Math.min(bounds.max[u], neighbor.max[u]);
+    const minV = Math.max(bounds.min[v], neighbor.min[v]);
+    const maxV = Math.min(bounds.max[v], neighbor.max[v]);
+    if (minU >= maxU || minV >= maxV) return [bounds];
+    const visible = [];
+    for (const [left, right, bottom, top] of [
+      [bounds.min[u], minU, bounds.min[v], bounds.max[v]],
+      [maxU, bounds.max[u], bounds.min[v], bounds.max[v]],
+      [minU, maxU, bounds.min[v], minV],
+      [minU, maxU, maxV, bounds.max[v]],
+    ]) {
+      if (left >= right || bottom >= top) continue;
+      const min = bounds.min.slice();
+      const max = bounds.max.slice();
+      min[u] = left;
+      max[u] = right;
+      min[v] = bottom;
+      max[v] = top;
+      visible.push({ min, max });
+    }
+    return visible;
   }
 
   function rebuildChunk(startX, startY, startZ) {
     const positions = [];
     const colors = [];
     const uvs = [];
+    const translucentFaces = [];
     const { width, depth, height } = worldModel.dimensions;
     for (let y = startY; y < Math.min(height, startY + CHUNK_SIZE); y += 1) {
       for (let z = startZ; z < Math.min(depth, startZ + CHUNK_SIZE); z += 1) {
         for (let x = startX; x < Math.min(width, startX + CHUNK_SIZE); x += 1) {
           const block = getBlock(x, y, z);
           if (block === 0) continue;
+          const translucent = blocks[block - 1].renderLayer === "translucent";
+          const orientation = worldModel.getOrientation(x, y, z);
+          const boxes = worldModel.getBoxes(x, y, z);
+          const axis = worldModel.getOrientationAxes(orientation).y;
           for (const face of faces) {
-            if (getBlock(x + face.neighbor[0], y + face.neighbor[1], z + face.neighbor[2]) !== 0) continue;
+            const neighborCell = [x, y, z].map((value, dimension) => value + face.neighbor[dimension]);
+            const neighborBlock = getBlock(...neighborCell);
+            const neighborBoxes = neighborBlock && blocks[neighborBlock - 1].renderLayer === "translucent"
+              && neighborBlock !== block ? [] : worldModel.getBoxes(...neighborCell);
+            const normalAxis = face.normal.findIndex((value) => value !== 0);
+            if (boxes.length === 1 && neighborBoxes.length === 1 && boxes[0] === neighborBoxes[0]
+              && boxes[0].min[normalAxis] === 0 && boxes[0].max[normalAxis] === 1) continue;
+            const neighbors = neighborBoxes.map((box) => ({
+              min: box.min.map((value, dimension) => value + face.neighbor[dimension]),
+              max: box.max.map((value, dimension) => value + face.neighbor[dimension]),
+            }));
             let tile = block - 1;
             if (block === 1) tile = face.normal[1] === 1 ? 0 : face.normal[1] === -1 ? 1 : blocks.length;
-            if (block === 4 && face.normal[1] !== 0) tile = blocks.length + 1;
+            if (block === 4 && Math.abs(
+              face.normal[0] * axis[0] + face.normal[1] * axis[1] + face.normal[2] * axis[2],
+            ) === 1) tile = blocks.length + 1;
             const faceUv = [[0, 1], [0, 0], [1, 0], [1, 1]];
-            const points = face.corners;
-            for (const cornerIndex of [0, 1, 2, 0, 2, 3]) {
-              const corner = points[cornerIndex];
-              positions.push(x + corner[0], y + corner[1], z + corner[2]);
-              colors.push(face.light, face.light, face.light);
-              uvs.push((tile * 16 + 0.5 + faceUv[cornerIndex][0] * 15) / atlasCanvas.width,
-                (0.5 + faceUv[cornerIndex][1] * 15) / 16);
+            for (const bounds of boxes) {
+              let visibleBounds = [bounds];
+              for (const neighbor of [...boxes.filter((box) => box !== bounds), ...neighbors]) {
+                visibleBounds = visibleBounds.flatMap((visible) => visibleFaceBounds(visible, neighbor, face.normal));
+              }
+              for (const visible of visibleBounds) {
+                const target = translucent ? { positions: [], colors: [], uvs: [],
+                  center: [x, y, z].map((value, dimension) =>
+                    value + (face.normal[dimension] === 0
+                      ? (visible.min[dimension] + visible.max[dimension]) / 2
+                      : face.normal[dimension] > 0 ? visible.max[dimension] : visible.min[dimension])),
+                  depth: 0,
+                } : { positions, colors, uvs };
+                for (const cornerIndex of [0, 1, 2, 0, 2, 3]) {
+                  const corner = face.corners[cornerIndex].map((value, dimension) =>
+                    value === 0 ? visible.min[dimension] : visible.max[dimension]);
+                  const uv = faceUv[cornerIndex].slice();
+                  for (let dimension = 0; dimension < 3; dimension += 1) {
+                    const alongU = face.corners[3][dimension] - face.corners[0][dimension];
+                    const alongV = face.corners[0][dimension] - face.corners[1][dimension];
+                    if (alongU) uv[0] = (corner[dimension] - face.corners[0][dimension]) * alongU;
+                    if (alongV) uv[1] = (corner[dimension] - face.corners[1][dimension]) * alongV;
+                  }
+                  target.positions.push(x + corner[0], y + corner[1], z + corner[2]);
+                  target.colors.push(face.light, face.light, face.light);
+                  target.uvs.push((tile * 16 + 0.5 + uv[0] * 15) / atlasCanvas.width,
+                    (0.5 + uv[1] * 15) / 16);
+                }
+                if (translucent) translucentFaces.push(target);
+              }
             }
           }
         }
@@ -749,6 +887,8 @@
       chunkMeshes.set(key, mesh);
     }
     mesh.count = positions.length / 3;
+    mesh.transparentFaces = translucentFaces;
+    transparentMeshDirty = true;
     for (const [buffer, data] of [[mesh.position, positions], [mesh.color, colors], [mesh.uv, uvs]]) {
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
@@ -756,18 +896,15 @@
   }
 
   function buildHotbar() {
-    selectedBlockName.textContent = blocks[selectedBlock - 1].name;
+    blockPicker.hidden = true;
     for (const [index, block] of blocks.entries()) {
       const button = document.createElement("button");
-      button.className = "hotbar-slot";
+      button.className = "block-option";
       button.type = "button";
-      const label = index < 9 ? `${index + 1}: ${block.name}` : block.name;
-      button.setAttribute("aria-label", label);
-      button.setAttribute("aria-pressed", String(selectedBlock === block.id));
-      button.title = label;
-      const number = document.createElement("span");
-      number.className = "slot-number";
-      number.textContent = index < 9 ? String(index + 1) : "";
+      button.setAttribute("aria-label", block.name);
+      button.title = block.name;
+      const name = document.createElement("span");
+      name.textContent = block.name;
       const swatch = document.createElement("canvas");
       swatch.className = "block-swatch";
       swatch.width = 16;
@@ -775,20 +912,160 @@
       swatch.setAttribute("aria-hidden", "true");
       const context = swatch.getContext("2d");
       if (!context) throw new Error("Could not create a block preview.");
-      context.drawImage(atlasCanvas, index * 16, 0, 16, 16, 0, 0, 16, 16);
-      button.append(number, swatch);
-      button.addEventListener("click", () => selectBlock(block.id));
+      for (const box of getBlockBoxes(block.id)) {
+        const left = box.min[2] * 16;
+        const top = (1 - box.max[1]) * 16;
+        const width = (box.max[2] - box.min[2]) * 16;
+        const height = (box.max[1] - box.min[1]) * 16;
+        context.drawImage(atlasCanvas, index * 16 + left, top, width, height, left, top, width, height);
+      }
+      button.append(swatch, name);
+      button.addEventListener("click", () => {
+        if (!pickerOpen || !blockCategories[selectedCategory].blocks.includes(block.id)) return;
+        candidateBlock = block.id;
+        closeBlockPicker(true);
+      });
+      blockOptions.append(button);
+    }
+    for (const [index, category] of blockCategories.entries()) {
+      const button = document.createElement("button");
+      button.className = "hotbar-slot";
+      button.type = "button";
+      button.setAttribute("aria-controls", "block-picker");
+      const number = document.createElement("span");
+      number.className = "slot-number";
+      number.textContent = String(index + 1);
+      const name = document.createElement("span");
+      name.className = "category-name";
+      name.textContent = category.name;
+      const current = document.createElement("span");
+      current.className = "category-block";
+      button.append(number, name, current);
+      button.addEventListener("click", () => {
+        if (index === selectedCategory) {
+          if (pickerOpen) closeBlockPicker(false);
+          else openBlockPicker();
+        } else {
+          selectCategory(index);
+        }
+      });
       hotbar.append(button);
+    }
+    updateBlockSelection();
+  }
+
+  function updateBlockSelection() {
+    const category = blockCategories[selectedCategory];
+    for (const [index, button] of [...hotbar.children].entries()) {
+      const item = blockCategories[index];
+      const block = blocks[categorySelections.get(item.id) - 1];
+      button.setAttribute("aria-pressed", String(index === selectedCategory));
+      button.setAttribute("aria-expanded", String(pickerOpen && index === selectedCategory));
+      button.setAttribute("aria-label", `${index + 1}: ${item.name} · ${block.name}`);
+      button.title = `${item.name} · ${block.name}（選択中のカテゴリを再タップで一覧）`;
+      button.children[2].textContent = block.name;
+    }
+    for (const [index, button] of [...blockOptions.children].entries()) {
+      button.hidden = !category.blocks.includes(blocks[index].id);
+      button.setAttribute("aria-pressed", String(blocks[index].id === candidateBlock));
+    }
+    selectedBlockName.textContent = blocks[selectedBlock - 1].name;
+    blockPickerTitle.textContent = `${selectedCategory + 1} · ${category.name}`;
+    blockCandidate.textContent = `${blocks[candidateBlock - 1].name} · ${category.blocks.indexOf(candidateBlock) + 1} / ${category.blocks.length}`;
+    chooseBlock.setAttribute("aria-expanded", String(pickerOpen));
+    blockPicker.hidden = !pickerOpen;
+  }
+
+  function saveBlockSelection() {
+    try {
+      localStorage.setItem(BLOCK_SELECTION_KEY, JSON.stringify({
+        category: blockCategories[selectedCategory].id,
+        selections: Object.fromEntries(categorySelections),
+      }));
+      selectionStatus.textContent = "";
+    } catch (error) {
+      console.error("Block selection could not be saved to this browser.", error);
+      selectionStatus.textContent = "建材の選択履歴を保存できませんでした";
     }
   }
 
-  function selectBlock(id) {
-    selectedBlock = id;
-    for (const [index, button] of [...hotbar.children].entries()) {
-      button.setAttribute("aria-pressed", String(blocks[index].id === id));
+  function loadBlockSelection() {
+    try {
+      const raw = localStorage.getItem(BLOCK_SELECTION_KEY);
+      if (!raw) return;
+      const settings = JSON.parse(raw);
+      if (!settings || typeof settings !== "object" || !settings.selections
+        || typeof settings.selections !== "object") throw new Error("Invalid block selection settings.");
+      const index = blockCategories.findIndex((category) => category.id === settings.category);
+      if (index < 0 || blockCategories.some((category) =>
+        !category.blocks.includes(settings.selections[category.id]))) throw new Error("Invalid block selection category.");
+      for (const category of blockCategories) categorySelections.set(category.id, settings.selections[category.id]);
+      selectedCategory = index;
+      selectedBlock = categorySelections.get(blockCategories[index].id);
+      candidateBlock = selectedBlock;
+    } catch (error) {
+      console.error("Block selection could not be loaded from this browser.", error);
+      selectionStatus.textContent = "建材の選択履歴を読み込めませんでした";
     }
-    selectedBlockName.textContent = blocks[id - 1].name;
-    message.textContent = `${blocks[id - 1].name}を選択中`;
+  }
+
+  function selectCategory(index) {
+    closeBlockPicker(false);
+    stopBlockAction();
+    selectedCategory = index;
+    selectedBlock = categorySelections.get(blockCategories[index].id);
+    candidateBlock = selectedBlock;
+    updateBlockSelection();
+    saveBlockSelection();
+    message.textContent = `${blocks[selectedBlock - 1].name}を選択中 · Rで建材を変更`;
+  }
+
+  function openBlockPicker() {
+    clearInput();
+    pickerOpen = true;
+    candidateBlock = selectedBlock;
+    updateBlockSelection();
+    message.textContent = "建材を選択中 · R／Enterで確定 · Escで取消";
+    if (document.pointerLockElement !== canvas) blockOptions.children[candidateBlock - 1].focus();
+  }
+
+  function closeBlockPicker(confirm) {
+    if (!pickerOpen) return;
+    const restoreFocus = blockPicker.contains(document.activeElement);
+    pickerOpen = false;
+    if (confirm) {
+      selectedBlock = candidateBlock;
+      categorySelections.set(blockCategories[selectedCategory].id, selectedBlock);
+      saveBlockSelection();
+    }
+    candidateBlock = selectedBlock;
+    updateBlockSelection();
+    message.textContent = `${blocks[selectedBlock - 1].name}を選択中`;
+    if (restoreFocus) hotbar.children[selectedCategory].focus();
+  }
+
+  function cycleBlockCandidate(direction) {
+    const ids = blockCategories[selectedCategory].blocks;
+    candidateBlock = ids[(ids.indexOf(candidateBlock) + direction + ids.length) % ids.length];
+    updateBlockSelection();
+    if (document.pointerLockElement !== canvas) {
+      blockOptions.children[candidateBlock - 1].focus({ preventScroll: true });
+    }
+    const option = blockOptions.children[candidateBlock - 1].getBoundingClientRect();
+    const list = blockOptions.getBoundingClientRect();
+    if (option.top < list.top) blockOptions.scrollTop -= list.top - option.top;
+    else if (option.bottom > list.bottom) blockOptions.scrollTop += option.bottom - list.bottom;
+  }
+
+  function handleSelectionWheel(event) {
+    if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+    event.preventDefault();
+    const now = performance.now();
+    if (now - lastSelectionWheel < 100) return;
+    lastSelectionWheel = now;
+    const direction = Math.sign(event.deltaY);
+    if (pickerOpen) cycleBlockCandidate(direction);
+    else selectCategory((selectedCategory + direction + blockCategories.length) % blockCategories.length);
   }
 
   function vecNormalize(vector) {
@@ -870,34 +1147,87 @@
     renderTriangles = 0;
     renderChunkCount = 0;
     resizeCanvas();
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
     gl.clearColor(0.62, 0.82, 0.88, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.useProgram(program);
-    const eye = [player.x, player.y + PLAYER_HEIGHT * 0.88, player.z];
+    const eye = cameraEye();
+    const direction = viewDirection();
     const viewProjection = matrixMultiply(
       perspective(Math.PI / 3, canvas.width / canvas.height, 0.08, 100),
-      lookAt(eye, viewDirection()),
+      lookAt(eye, direction),
     );
     gl.uniformMatrix4fv(gl.getUniformLocation(program, "uViewProjection"), false, viewProjection);
     gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 1);
     gl.enableVertexAttribArray(uvAttribute);
     for (const mesh of chunkMeshes.values()) {
-      if (!mesh.count) continue;
-      if (measureRender) renderChunkCount += 1;
-      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.position);
-      gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.color);
-      gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, mesh.uv);
-      gl.vertexAttribPointer(uvAttribute, 2, gl.FLOAT, false, 0, 0);
-      drawArrays(gl.TRIANGLES, 0, mesh.count);
+      if (measureRender && (mesh.count || mesh.transparentFaces.length)) renderChunkCount += 1;
+      if (mesh.count) drawTexturedMesh(mesh);
     }
     gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 0);
     gl.disableVertexAttribArray(uvAttribute);
     gl.vertexAttrib2f(uvAttribute, 0, 0);
-    renderTargetOutline();
     renderRemotePlayers(viewProjection);
+    renderTargetOutline();
+    renderTransparentBlocks(eye, direction);
     if (measureRender) lastRenderDurationMs = performance.now() - renderStartedAt;
+  }
+
+  function drawTexturedMesh(mesh) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.position);
+    gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.color);
+    gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.uv);
+    gl.vertexAttribPointer(uvAttribute, 2, gl.FLOAT, false, 0, 0);
+    drawArrays(gl.TRIANGLES, 0, mesh.count);
+  }
+
+  function renderTransparentBlocks(eye, direction) {
+    const view = [...eye, ...direction].join(",");
+    if (transparentMeshDirty || view !== transparentView) {
+      if (transparentMeshDirty) {
+        transparentFaces = [...chunkMeshes.values()].flatMap((mesh) => mesh.transparentFaces);
+      }
+      for (const face of transparentFaces) {
+        face.depth = face.center.reduce((depth, value, axis) =>
+          depth + (value - eye[axis]) * direction[axis], 0);
+      }
+      transparentFaces.sort((a, b) => b.depth - a.depth);
+      const count = transparentFaces.length * 6;
+      if (transparentMesh.count !== count) {
+        transparentMesh.positions = new Float32Array(count * 3);
+        transparentMesh.colors = new Float32Array(count * 3);
+        transparentMesh.uvs = new Float32Array(count * 2);
+      }
+      transparentMesh.count = count;
+      for (const [index, face] of transparentFaces.entries()) {
+        transparentMesh.positions.set(face.positions, index * 18);
+        transparentMesh.colors.set(face.colors, index * 18);
+        transparentMesh.uvs.set(face.uvs, index * 12);
+      }
+      if (count) {
+        for (const [buffer, data] of [
+          [transparentMesh.position, transparentMesh.positions],
+          [transparentMesh.color, transparentMesh.colors], [transparentMesh.uv, transparentMesh.uvs],
+        ]) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+          gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        }
+      }
+      transparentView = view;
+      transparentMeshDirty = false;
+    }
+    if (!transparentMesh.count) return;
+    gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 1);
+    gl.enableVertexAttribArray(uvAttribute);
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    drawTexturedMesh(transparentMesh);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
   }
 
   function drawArrays(mode, first, count) {
@@ -911,12 +1241,29 @@
   function renderTargetOutline() {
     const target = raycast();
     if (!target) return;
-    const left = target.x - 0.003;
-    const bottom = target.y - 0.003;
-    const back = target.z - 0.003;
-    const right = target.x + 1.003;
-    const top = target.y + 1.003;
-    const front = target.z + 1.003;
+    if (blocks[getBlock(target.x, target.y, target.z) - 1].orientationMode === "horizontal") {
+      const edges = getStairOutline(worldModel.getOrientation(target.x, target.y, target.z),
+        worldModel.getStairShape(target.x, target.y, target.z));
+      let offset = 0;
+      for (const edge of edges) {
+        for (const point of edge) {
+          stairTargetPositions.set(point.map((value, axis) => value + [target.x, target.y, target.z][axis]), offset);
+          offset += 3;
+        }
+      }
+      gl.depthRange(0, 0.99999);
+      drawTargetOutline(stairTargetPositions.subarray(0, offset), stairTargetColors.subarray(0, offset));
+      gl.depthRange(0, 1);
+      return;
+    }
+    const bounds = getBlockBounds(getBlock(target.x, target.y, target.z),
+      worldModel.getOrientation(target.x, target.y, target.z));
+    const left = target.x + bounds.min[0] - 0.003;
+    const bottom = target.y + bounds.min[1] - 0.003;
+    const back = target.z + bounds.min[2] - 0.003;
+    const right = target.x + bounds.max[0] + 0.003;
+    const top = target.y + bounds.max[1] + 0.003;
+    const front = target.z + bounds.max[2] + 0.003;
     const corners = [
       [left, bottom, back], [right, bottom, back], [right, top, back], [left, top, back],
       [left, bottom, front], [right, bottom, front], [right, top, front], [left, top, front],
@@ -927,13 +1274,17 @@
       targetPositions.set(corners[end], offset + 3);
       offset += 6;
     }
+    drawTargetOutline(targetPositions, targetColors);
+  }
+
+  function drawTargetOutline(positions, colors) {
     gl.bindBuffer(gl.ARRAY_BUFFER, targetPositionBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, targetPositions, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
     gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, targetColorBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, targetColors, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.DYNAMIC_DRAW);
     gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
-    drawArrays(gl.LINES, 0, targetPositions.length / 3);
+    drawArrays(gl.LINES, 0, positions.length / 3);
   }
 
   function isRemotePlayerState(state) {
@@ -1109,7 +1460,7 @@
       remote.state.yaw += yawDelta * interpolation;
       remote.state.pitch += (remote.target.pitch - remote.state.pitch) * interpolation;
 
-      const eyeY = player.y + PLAYER_HEIGHT * 0.88;
+      const eyeY = cameraEye()[1];
       if (Math.hypot(remote.state.x - player.x, remote.state.z - player.z) < 0.55
         && eyeY > remote.state.y && eyeY < remote.state.y + PLAYER_HEIGHT) {
         getRemotePlayerLabel(remote.id).hidden = true;
@@ -1144,6 +1495,8 @@
   }
 
   function collidesAt(x, feetY, z) {
+    const min = [x - PLAYER_RADIUS, feetY + 0.0001, z - PLAYER_RADIUS];
+    const max = [x + PLAYER_RADIUS, feetY + PLAYER_HEIGHT - 0.04, z + PLAYER_RADIUS];
     const minX = Math.floor(x - PLAYER_RADIUS);
     const maxX = Math.floor(x + PLAYER_RADIUS);
     const minZ = Math.floor(z - PLAYER_RADIUS);
@@ -1153,7 +1506,7 @@
     for (let y = minY; y <= maxY; y += 1) {
       for (let cellZ = minZ; cellZ <= maxZ; cellZ += 1) {
         for (let cellX = minX; cellX <= maxX; cellX += 1) {
-          if (getBlock(cellX, y, cellZ) !== 0) return true;
+          if (worldModel.intersectsBox(cellX, y, cellZ, min, max)) return true;
         }
       }
     }
@@ -1166,13 +1519,63 @@
     const minZ = Math.floor(z - PLAYER_RADIUS);
     const maxZ = Math.floor(z + PLAYER_RADIUS);
     for (let y = Math.floor(fromY - 0.0001); y >= Math.floor(toY); y -= 1) {
+      let support = null;
       for (let cellZ = minZ; cellZ <= maxZ; cellZ += 1) {
         for (let cellX = minX; cellX <= maxX; cellX += 1) {
-          if (getBlock(cellX, y, cellZ) !== 0) return y + 1;
+          for (const bounds of worldModel.getBoxes(cellX, y, cellZ)) {
+            const top = y + bounds.max[1];
+            if (top > fromY + 0.0001 || top < toY) continue;
+            if (x + PLAYER_RADIUS > cellX + bounds.min[0] && x - PLAYER_RADIUS < cellX + bounds.max[0]
+              && z + PLAYER_RADIUS > cellZ + bounds.min[2] && z - PLAYER_RADIUS < cellZ + bounds.max[2]) {
+              support = Math.max(support ?? top, top);
+            }
+          }
+        }
+      }
+      if (support !== null) return support;
+    }
+    return toY;
+  }
+
+  function moveHorizontally(x, z) {
+    if (!collidesAt(x, player.y, z)) {
+      player.x = x;
+      player.z = z;
+      return;
+    }
+    if (player.flying || !player.grounded || player.velocityY > 0) return;
+    const support = findSupportY(x, z, player.y + 0.5, player.y);
+    if (support <= player.y || collidesAt(player.x, support, player.z) || collidesAt(x, support, z)) return;
+    player.x = x;
+    player.z = z;
+    stepViewOffset -= support - player.y;
+    player.y = support;
+  }
+
+  function cameraEye() {
+    return [player.x, player.y + PLAYER_HEIGHT * 0.88 + stepViewOffset, player.z];
+  }
+
+  function findCeilingY(nextY) {
+    let ceiling = Infinity;
+    const head = player.y + PLAYER_HEIGHT - 0.04;
+    const nextHead = nextY + PLAYER_HEIGHT - 0.04;
+    for (let y = Math.floor(head); y <= Math.floor(nextHead); y += 1) {
+      for (let z = Math.floor(player.z - PLAYER_RADIUS); z <= Math.floor(player.z + PLAYER_RADIUS); z += 1) {
+        for (let x = Math.floor(player.x - PLAYER_RADIUS); x <= Math.floor(player.x + PLAYER_RADIUS); x += 1) {
+          for (const box of worldModel.getBoxes(x, y, z)) {
+            const bottom = y + box.min[1];
+            if (bottom < head - 0.0001 || bottom > nextHead) continue;
+            if (player.x + PLAYER_RADIUS > x + box.min[0] && player.x - PLAYER_RADIUS < x + box.max[0]
+              && player.z + PLAYER_RADIUS > z + box.min[2] && player.z - PLAYER_RADIUS < z + box.max[2]) {
+              ceiling = Math.min(ceiling, bottom);
+            }
+          }
         }
       }
     }
-    return toY;
+    if (!Number.isFinite(ceiling)) throw new Error("Could not resolve upward player collision.");
+    return ceiling - PLAYER_HEIGHT;
   }
 
   function update(dt) {
@@ -1186,14 +1589,15 @@
       - Number(keys.has("KeyA") || keys.has("ArrowLeft"))
       + touchMove.x));
     const length = Math.max(1, Math.hypot(forwardInput, sideInput));
-    const forward = viewDirection();
-    const stepX = (forward[0] * forwardInput + Math.cos(player.yaw) * sideInput) / length * 4.5 * dt;
-    const stepZ = (forward[2] * forwardInput + Math.sin(player.yaw) * sideInput) / length * 4.5 * dt;
+    const sprinting = keys.has("KeyW") && forwardInput > 0 && (doubleTapSprint || keys.has("KeyF"));
+    const speed = 4.5 * (sprinting ? SPRINT_MULTIPLIER : 1);
+    const stepX = (Math.sin(player.yaw) * forwardInput + Math.cos(player.yaw) * sideInput) / length * speed * dt;
+    const stepZ = (-Math.cos(player.yaw) * forwardInput + Math.sin(player.yaw) * sideInput) / length * speed * dt;
 
     const nextX = Math.max(PLAYER_RADIUS, Math.min(width - PLAYER_RADIUS, player.x + stepX));
-    if (!collidesAt(nextX, player.y, player.z)) player.x = nextX;
+    moveHorizontally(nextX, player.z);
     const nextZ = Math.max(PLAYER_RADIUS, Math.min(depth - PLAYER_RADIUS, player.z + stepZ));
-    if (!collidesAt(player.x, player.y, nextZ)) player.z = nextZ;
+    moveHorizontally(player.x, nextZ);
 
     if (player.flying) {
       const up = keys.has("Space") || [...heldTouchActions.values()].includes("up");
@@ -1215,7 +1619,7 @@
       player.velocityY = 0;
       player.grounded = true;
     } else {
-      player.y = Math.floor(nextY + PLAYER_HEIGHT) - PLAYER_HEIGHT;
+      player.y = findCeilingY(nextY);
       player.velocityY = 0;
     }
   }
@@ -1248,8 +1652,9 @@
 
   function raycast() {
     const direction = viewDirection();
+    const origin = cameraEye();
     let x = Math.floor(player.x);
-    let y = Math.floor(player.y + PLAYER_HEIGHT * 0.88);
+    let y = Math.floor(origin[1]);
     let z = Math.floor(player.z);
     const stepX = Math.sign(direction[0]);
     const stepY = Math.sign(direction[1]);
@@ -1258,28 +1663,25 @@
     const deltaY = direction[1] === 0 ? Infinity : Math.abs(1 / direction[1]);
     const deltaZ = direction[2] === 0 ? Infinity : Math.abs(1 / direction[2]);
     let maxX = direction[0] === 0 ? Infinity : ((stepX > 0 ? x + 1 : x) - player.x) / direction[0];
-    let maxY = direction[1] === 0 ? Infinity : ((stepY > 0 ? y + 1 : y) - (player.y + PLAYER_HEIGHT * 0.88)) / direction[1];
+    let maxY = direction[1] === 0 ? Infinity : ((stepY > 0 ? y + 1 : y) - origin[1]) / direction[1];
     let maxZ = direction[2] === 0 ? Infinity : ((stepZ > 0 ? z + 1 : z) - player.z) / direction[2];
     let distance = 0;
-    let normal = [0, 0, 0];
 
     while (distance <= REACH) {
-      if (getBlock(x, y, z) !== 0) return { x, y, z, normal, distance };
+      const hit = worldModel.raycastBlock(x, y, z, origin, direction, REACH);
+      if (hit) return { x, y, z, ...hit };
       if (maxX < maxY && maxX < maxZ) {
         x += stepX;
         distance = maxX;
         maxX += deltaX;
-        normal = [-stepX, 0, 0];
       } else if (maxY < maxZ) {
         y += stepY;
         distance = maxY;
         maxY += deltaY;
-        normal = [0, -stepY, 0];
       } else {
         z += stepZ;
         distance = maxZ;
         maxZ += deltaZ;
-        normal = [0, 0, -stepZ];
       }
     }
     return null;
@@ -1300,17 +1702,43 @@
       message.textContent = "置きたい場所に近づいてね";
       return false;
     }
-    const x = target.x + target.normal[0];
-    const y = target.y + target.normal[1];
-    const z = target.z + target.normal[2];
-    if (!inBounds(x, y, z) || getBlock(x, y, z) !== 0 || collidesAt(player.x, player.y, player.z)
-      || (x >= player.x - PLAYER_RADIUS && x <= player.x + PLAYER_RADIUS
-        && z >= player.z - PLAYER_RADIUS && z <= player.z + PLAYER_RADIUS
-        && y < player.y + PLAYER_HEIGHT && y + 1 > player.y)) {
+    let x = target.x + target.normal[0];
+    let y = target.y + target.normal[1];
+    let z = target.z + target.normal[2];
+    let placedBlock = selectedBlock;
+    const hitY = cameraEye()[1] + viewDirection()[1] * target.distance - target.y;
+    const block = blocks[selectedBlock - 1];
+    let orientation = block.orientationMode === "axis"
+      ? worldModel.orientationFromNormal(target.normal)
+      : block.orientationMode === "horizontal" ? orientationFromFacing(viewDirection(),
+        slabOrientationForPlacement(target.normal, hitY) === upperSlabOrientation)
+        : block.orientationMode === "slab" ? slabOrientationForPlacement(target.normal, hitY) : 0;
+    if (orientation === null) {
+      message.textContent = "ブロックの向きを決められませんでした";
+      return false;
+    }
+    if (selectedBlock === 16) {
+      const targetOrientation = worldModel.getOrientation(target.x, target.y, target.z);
+      if (getBlock(target.x, target.y, target.z) === 16
+        && ((targetOrientation === 0 && target.normal[1] === 1)
+          || (targetOrientation === upperSlabOrientation && target.normal[1] === -1))) {
+        x = target.x;
+        y = target.y;
+        z = target.z;
+        placedBlock = 6;
+        orientation = 0;
+      } else if (canMergeSlab(getBlock(x, y, z), worldModel.getOrientation(x, y, z), orientation)) {
+        placedBlock = 6;
+        orientation = 0;
+      }
+    }
+    if (!inBounds(x, y, z) || (getBlock(x, y, z) !== 0
+      && !(selectedBlock === 16 && placedBlock === 6 && getBlock(x, y, z) === 16))
+      || collidesAt(player.x, player.y, player.z)) {
       message.textContent = "そこにはブロックを置けません";
       return false;
     }
-    return changeBlock(x, y, z, selectedBlock);
+    return changeBlock(x, y, z, placedBlock, orientation);
   }
 
   function performBlockAction(type) {
@@ -1334,6 +1762,7 @@
   }
 
   function startBlockAction(type, source, pointerId = null) {
+    if (pickerOpen) return false;
     if (activeBlockAction) return false;
     const action = { type, source, pointerId, timer: null };
     activeBlockAction = action;
@@ -1380,6 +1809,7 @@
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
   canvas.addEventListener("click", (event) => {
+    if (pickerOpen) return;
     if (event.pointerType === "touch") return;
     if (document.pointerLockElement === canvas || pointerLockPending) return;
     if (typeof canvas.requestPointerLock !== "function") {
@@ -1414,6 +1844,7 @@
   });
   canvas.addEventListener("pointerdown", (event) => {
     prepareAudioForInteraction();
+    if (pickerOpen) return;
     if (event.pointerType !== "touch") return;
     enableTouchControls();
     event.preventDefault();
@@ -1483,6 +1914,7 @@
     touchJump.setAttribute("aria-label", player.flying ? "上昇。素早く2回で飛行を解除" : "ジャンプ。素早く2回で飛行");
   }
   function setFlying(flying) {
+    stepViewOffset = 0;
     player.flying = flying;
     player.velocityY = 0;
     lastJumpTime = -Infinity;
@@ -1514,6 +1946,9 @@
     virtualStick.style.setProperty("--stick-y", "0px");
   }
   function clearInput() {
+    closeBlockPicker(false);
+    lastForwardTime = -Infinity;
+    doubleTapSprint = false;
     stopBlockAction();
     keys.clear();
     touchPointers.clear();
@@ -1525,6 +1960,7 @@
   }
   function bindTouchAction(button, action, heldAction) {
     button.addEventListener("pointerdown", (event) => {
+      if (pickerOpen) return;
       prepareAudioForInteraction();
       event.preventDefault();
       event.stopPropagation();
@@ -1565,27 +2001,68 @@
     message.textContent = "マウス操作を開始できませんでした。もう一度クリックしてください";
   });
   window.addEventListener("mousemove", (event) => {
-    if (document.pointerLockElement !== canvas) return;
+    if (document.pointerLockElement !== canvas || pickerOpen) return;
     player.yaw += event.movementX * 0.0025;
     player.pitch = Math.max(-1.48, Math.min(1.48, player.pitch - event.movementY * 0.0025));
   });
   window.addEventListener("keydown", (event) => {
     prepareAudioForInteraction();
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    if (event.target.isContentEditable || event.target.tagName === "SELECT") return;
+    if (event.code === "KeyR") {
+      event.preventDefault();
+      if (!event.repeat) {
+        if (pickerOpen) closeBlockPicker(true);
+        else openBlockPicker();
+      }
+      return;
+    }
+    if (/^Digit[1-9]$/.test(event.code)) {
+      const index = Number(event.code.slice(5)) - 1;
+      if (index < blockCategories.length) {
+        event.preventDefault();
+        if (!event.repeat) selectCategory(index);
+      }
+      return;
+    }
+    if (pickerOpen) {
+      if (["Enter", "Space"].includes(event.code) && event.target.tagName === "BUTTON") return;
+      if (["ArrowUp", "ArrowDown", "Space", "Enter", "Escape"].includes(event.code)) event.preventDefault();
+      if (event.code === "ArrowUp") cycleBlockCandidate(-1);
+      if (event.code === "ArrowDown") cycleBlockCandidate(1);
+      if (event.code === "Enter" && !event.repeat) closeBlockPicker(true);
+      if (event.code === "Escape") closeBlockPicker(false);
+      return;
+    }
+    if (event.target.tagName === "BUTTON" && ["Enter", "Space"].includes(event.code)) return;
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyI" && !event.repeat) {
       debugIndicator.hidden = !debugIndicator.hidden;
       updateDebugIndicator();
     }
-    if (event.code.startsWith("Digit")) {
-      const index = Number(event.code.slice(5));
-      if (index >= 1 && index <= blocks.length) selectBlock(index);
-    }
     if (event.code === "Escape" && expanded) void toggleFullscreen();
     if (event.code === "Space" && !event.repeat && !keys.has("Space")) jump();
+    if (event.code === "KeyW" && !event.repeat && !keys.has("KeyW")) {
+      const now = performance.now();
+      doubleTapSprint = now - lastForwardTime <= DOUBLE_FORWARD_MS;
+      lastForwardTime = now;
+    }
     keys.add(event.code);
   });
-  window.addEventListener("keyup", (event) => keys.delete(event.code));
+  window.addEventListener("keyup", (event) => {
+    keys.delete(event.code);
+    if (event.code === "KeyW") doubleTapSprint = false;
+  });
+  chooseBlock.addEventListener("click", () => {
+    if (pickerOpen) closeBlockPicker(false);
+    else openBlockPicker();
+  });
+  document.querySelector("#confirm-block-picker").addEventListener("click", () => closeBlockPicker(true));
+  document.querySelector("#cancel-block-picker").addEventListener("click", () => closeBlockPicker(false));
+  document.querySelector(".game-footer").addEventListener("wheel", handleSelectionWheel, { passive: false });
+  canvas.addEventListener("wheel", (event) => {
+    if (document.pointerLockElement === canvas || pickerOpen) handleSelectionWheel(event);
+  }, { passive: false });
   window.addEventListener("blur", clearInput);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
@@ -1659,6 +2136,8 @@
       nextFrameTimeSample = (nextFrameTimeSample + 1) % FRAME_SAMPLE_CAPACITY;
       frameTimeSampleCount = Math.min(frameTimeSampleCount + 1, FRAME_SAMPLE_CAPACITY);
     }
+    stepViewOffset *= Math.exp(-STEP_VIEW_RESPONSE * Math.max(0, frameInterval) / 1000);
+    if (Math.abs(stepViewOffset) < 0.0001) stepViewOffset = 0;
     update(dt);
     debugTimer += dt;
     if (debugTimer >= 0.1) {
@@ -1678,6 +2157,7 @@
     initializeRenderer();
     loadAudioSettings();
     loadGame();
+    loadBlockSelection();
     updateWorldLabel();
     buildHotbar();
     rebuildWorldMesh();

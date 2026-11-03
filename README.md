@@ -27,19 +27,42 @@ multiplayer room controls. Invitation links open the room-management tab.
 
 - Click the game to capture the mouse; move the mouse to look around
 - `W` / `A` / `S` / `D`: move; `Space`: jump
+- Double-tap `W` within 300 ms to sprint until releasing `W`, or hold `F` + `W`.
+  Sprint is 1.5x horizontal speed, including in flight; vertical flight speed is
+  unchanged. Releasing `F` ends modifier-based sprint. Touch-only sprint is not
+  implemented.
+- Horizontal movement follows yaw only: looking up or down does not reduce
+  walking or flight speed, including touch movement.
 - Press jump twice within 300 ms to toggle flight. While flying, hold
   `Space` to ascend or `Shift` to descend; release to hover. Walls and
   ceilings still block movement, and feet cannot rise above world height + 10.
 - Aim at a nearby block and left-click: mine it
 - Right-click an adjacent empty space: place the selected block
+- Wood logs align their long axis with the face you place them against.
 - Hold the left or right mouse button while the pointer is locked to repeat mining or placement; on touch devices, hold the on-screen mine or place button
 - A thin gold outline marks the block currently under the crosshair
-- Click or tap a hotbar slot to select a block; its name appears beside the hotbar.
-  Scroll the single-row hotbar horizontally for more materials. `1`–`9` select
-  the original nine materials; colored walls are selected by clicking or tapping.
+- `1`–`6` select categories: nature/terrain, basic building materials, stairs,
+  slabs, windows/glass and colored blocks. Each category recalls its last
+  confirmed block. `7`–`9` are currently unassigned, rather than material shortcuts.
+- Press `R` to open the current category's block picker. Use the wheel or
+  up/down arrows to preview candidates; `R` or `Enter` confirms, and `Esc`
+  cancels. Clicking/tapping a candidate confirms it immediately. Explicit
+  confirm/cancel buttons are also available.
+- Click/tap a category to recall its block; tap the active category again, or
+  use **建材を選ぶ · R**, to open the picker. The category bar shows the category
+  names and their remembered blocks and wraps on narrow screens.
+- While the picker is closed, the wheel cycles categories over the selector,
+  or over the game when the mouse is captured. While open, it cycles candidates.
+  Movement/look, jumping and building inputs stop during selection; gravity and
+  shared-world updates continue. Leaving the page, releasing mouse capture or
+  changing rooms cancels unconfirmed selection and clears held input.
+- Confirmed category choices are stored separately from worlds in this browser,
+  including across room changes and page reloads. Storage errors are displayed;
+  block IDs, world saves and the shared protocol are unchanged by this UI.
 - Block mining, placement, and ambient bird sounds are muted by default. Use the sound toggle and volume slider in the game toolbar to opt in; settings are saved in this browser.
 - `I`: toggle the world-coordinate and movement indicator, including FPS, frame-time p95, render submission time, chunk count, draw calls, and triangles. These diagnostics stay in this browser and are not uploaded. Render submission time measures JavaScript/WebGL command submission, not GPU execution.
-- `Esc`: release the mouse
+- `Esc`: cancel an open picker; otherwise release the mouse. The browser may
+  also release captured input or leave native fullscreen when handling `Esc`.
 - On touch devices, drag the left half to move and the right half to look;
   a virtual pad stays visible while idle. Use the on-screen buttons to mine,
   place, and jump. Double-tap jump to toggle flight; hold the ascent or descent
@@ -48,11 +71,79 @@ multiplayer room controls. Invitation links open the room-management tab.
   Exit with the same button or `Esc`. Browsers without element fullscreen
   support use a page-filling layout instead (browser chrome may remain).
 
-All fifteen blocks have small procedural pixel textures. Planks, bricks, a white
-wall, and an opaque glass-style window are available alongside the original
+All seventeen blocks have small procedural pixel textures. Planks, bricks, a white
+wall, and a translucent window are available alongside the original
 five materials. Six solid colored walls (red, blue, yellow, green, purple, and
-black) provide decoration without changing cube collision or adding transparent
-rendering. Window blocks are solid, not transparent. Stairs are not yet implemented.
+black) provide decoration without changing cube collision. Window frames are
+opaque and the glass is translucent, but the whole window remains a solid,
+targetable cube. Existing windows gain this appearance when loaded; their ID,
+orientation, collision and saved data do not change.
+
+Opaque terrain and players render before translucent faces. Window faces are
+sorted back-to-front across chunks using face-center view depth, with depth
+testing enabled and depth writes disabled. Shared window faces are removed;
+opaque surfaces visible through glass are retained. Stationary views reuse
+the sorted buffers. This is conventional face sorting, not order-independent
+transparency; complex overlapping arrangements may still expose sorting
+artifacts. Water, reflection, refraction, tinted glass and cutout leaves are
+outside this first implementation.
+
+Plank slabs occupy either half of a cell. Select category `4` for slabs.
+Placing on a top face
+creates a lower slab, and placing underneath creates an upper slab. On a side
+face, aiming at its upper half selects an upper slab (the midpoint counts as
+upper); aiming below the midpoint selects a lower slab.
+Its visible surfaces, targeting outline, collision and landing height use the
+same oriented box bounds. Rays pass through the empty half, and adjoining blocks
+only hide the surface area they actually cover.
+
+With the slab selected, placing on a lower slab's exposed top or an upper slab's
+exposed bottom fills the same cell. A complementary slab in the adjacent target
+cell also merges. Two halves become a normal plank block (ID 6), mined as one
+block; they cannot be split afterward. Matching halves do not overwrite each
+other. Merges are rejected if the completed cube would overlap a player.
+Shared merges compare both the original slab ID and its orientation, and wait
+for server confirmation before changing the local world.
+
+Straight plank stairs (ID 17) combine a lower half-block with a half-depth upper
+step. Select category `3`; the ascending direction follows your horizontal
+facing when placing them, in four cardinal directions. Like slabs, stairs placed
+underneath a block or against the upper half of a side face are upside-down;
+top faces and the lower half of a side face produce upright stairs.
+Upside-down stairs have a full upper half and a half-depth lower step, keeping
+the same horizontal facing. Their mesh, targeting,
+outline, support height and client/server collision use the oriented solid
+shape, not its enclosing cube. Hidden internal surfaces are removed.
+
+Stairs automatically form inner and outer corners when perpendicular stairs of
+the same upright/upside-down type meet at the same cell height. A perpendicular
+stair ahead creates an outer corner; one behind creates an inner corner.
+A same-facing side continuation preserves a straight run, and an eligible outer
+corner takes precedence over an inner corner. Upright and upside-down stairs do
+not join each other.
+
+Corner shapes are derived from neighboring IDs and orientations, not saved as
+extra state or sent as secondary edits. Placement order does not affect the
+result. Placement, mining, loading and shared updates immediately recompute the
+shape, including across chunk boundaries. Existing connected stairs also gain
+corners when loaded. Rendering, the targeting contour, rays, support, ceilings
+and collision use the same derived boxes.
+An edit is rejected if its new solid volume would overlap a player, including
+when mining one stair would expand a neighboring corner. Shared edits check all
+players before committing; the solo client checks its own player.
+
+While grounded, walking automatically climbs steps up to half a block high,
+including slabs and the half-height rise from a slab onto a full cube. The body
+must have clearance both while lifting and at the destination. Full-block-high
+walls still require jumping; step-up is disabled while airborne or flying.
+Descending uses normal gravity. This intentionally replaces the previous
+jump-required slab behavior.
+
+Step-up keeps physical collision and network positions immediate, while the
+local camera follows the rise smoothly (about 0.15-0.2 seconds to settle most
+of a half-step). This uses time-based interpolation, not blur. Targeting and
+transparent-face sorting use the same camera position. Spawn, room transitions
+and flight toggles clear the visual offset; normal descent still uses gravity.
 
 Solo worlds are saved in the current browser using local storage. Joining a
 room temporarily switches to its shared world without overwriting the solo
@@ -198,13 +289,23 @@ Production checks verified the flat/tree-free grassland, editing at the new
 edge, late-join restoration, and preservation of an existing local 40-square
 save when entering and leaving a new 64-square room.
 
-The colored-wall implementation is **local and unpublished**, and uses protocol
-**v4** to prevent old clients from receiving block IDs they cannot render or load.
-Publish the updated Worker first (`wrangler deploy`), then the matching static
-client, and reload all participating browsers. Earlier protocol clients cannot
-exchange gameplay messages with a v4 Worker. Existing block IDs, world format,
-40-/64-square works, and backups remain compatible with the new implementation.
-No new dependencies, bindings, or configuration changes are required.
+Colored walls and the matching protocol **v4** client and Worker were published
+on 2026-11-03. The protocol **v10** release adds a common set of 24
+orthogonal block rotations, stores orientation in world snapshot format v2,
+and synchronizes it with protocol **v10**, including upper/lower plank slabs
+(block ID 16) and straight plank stairs (ID 17). Existing version-one saves and rooms
+load with their original default orientation. Logs choose a vertical or
+horizontal axis from the face being placed against; lower slabs use orientation
+zero and upper slabs use orientation 20. Old lower slabs remain unchanged.
+Stairs accept four upright orientations (0-3) and four upside-down orientations
+(20-23); sideways stairs remain invalid. Existing upright stairs are unchanged. The world
+format stays at v2, including the orientation, slab and automatic stair-corner updates. These
+updates, translucent windows, smoother stepping, sprint and the category-based
+block picker are included in this release. The v10 Worker was deployed on
+2026-11-03; pushing this release publishes the matching GitHub Pages client.
+Deploy the Worker first, then the matching static client, and reload all
+participating browsers. Older protocol clients cannot exchange gameplay
+messages with the new Worker.
 
 ## Publish with GitHub Pages
 

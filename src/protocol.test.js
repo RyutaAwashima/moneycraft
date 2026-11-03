@@ -26,27 +26,34 @@ test("player states must be finite and inside world bounds", () => {
   assert.equal(isPlayerStatePayload({ ...valid, y: Number.NaN }), false);
   assert.equal(isPlayerStatePayload({ ...valid, pitch: 2 }), false);
   assert.equal(isPlayerStatePayload(null), false);
-  assert.equal(PROTOCOL_VERSION, 4);
+  assert.equal(PROTOCOL_VERSION, 10);
 });
 
 test("block edits validate identifiers, bounds and compare-and-set operations", () => {
-  const edit = { requestId: "edit-1", x: 2, y: 8, z: 3, block: 9, expectedBlock: 0 };
+  const edit = { requestId: "edit-1", x: 2, y: 8, z: 3, block: 9, orientation: 0, expectedBlock: 0 };
   assert.equal(isBlockEditPayload(edit), true);
   assert.equal(isBlockEditPayload({ ...edit, block: 0, expectedBlock: 9 }), true);
   for (const invalid of [
     null, { ...edit, x: 64 }, { ...edit, y: -1 }, { ...edit, z: 1.5 },
-    { ...edit, block: 16 }, { ...edit, expectedBlock: 16 }, { ...edit, expectedBlock: 1 },
-    { ...edit, block: 0 }, { ...edit, requestId: "" }, { ...edit, requestId: "x".repeat(65) },
+    { ...edit, block: 18 }, { ...edit, expectedBlock: 18 }, { ...edit, expectedBlock: 1 },
+    { ...edit, block: 0 }, { ...edit, orientation: -1 }, { ...edit, orientation: 24 },
+    { ...edit, block: 0, orientation: 1 }, { ...edit, orientation: undefined },
+    { ...edit, requestId: "" }, { ...edit, requestId: "x".repeat(65) },
   ]) assert.equal(isBlockEditPayload(invalid), false);
-  for (let block = 10; block <= 15; block += 1) {
+  for (let block = 10; block <= 17; block += 1) {
     assert.equal(isBlockEditPayload({ ...edit, block }), true);
     assert.equal(isBlockEditPayload({ ...edit, block: 0, expectedBlock: block }), true);
+  }
+  assert.equal(isBlockEditPayload({ ...edit, block: 16, orientation: 1 }), false);
+  for (let orientation = 0; orientation < 24; orientation += 1) {
+    assert.equal(isBlockEditPayload({ ...edit, block: 17, orientation }),
+      globalThis.MoneycraftWorld.stairOrientations.includes(orientation));
   }
 });
 
 test("validation uses the room size, including coordinates beyond the old edge", () => {
   const state = { x: 63.5, y: 6, z: 63.5, yaw: 0, pitch: 0 };
-  const edit = { requestId: "edge-1", x: 63, y: 8, z: 63, block: 9, expectedBlock: 0 };
+  const edit = { requestId: "edge-1", x: 63, y: 8, z: 63, block: 9, orientation: 0, expectedBlock: 0 };
   const legacy = globalThis.MoneycraftWorld.legacyOptions;
   assert.equal(isPlayerStatePayload(state), true);
   assert.equal(isBlockEditPayload(edit), true);
@@ -54,4 +61,16 @@ test("validation uses the room size, including coordinates beyond the old edge",
   assert.equal(isBlockEditPayload(edit, legacy), false);
   assert.equal(isPlayerStatePayload({ ...state, x: 64.01 }), false);
   assert.equal(isBlockEditPayload({ ...edit, z: 64 }), false);
+});
+
+test("slab merging allows only oriented slab-to-plank replacements", () => {
+  const edit = { requestId: "merge", x: 2, y: 8, z: 3, block: 6, orientation: 0,
+    expectedBlock: 16, expectedOrientation: 0 };
+  assert.equal(isBlockEditPayload(edit), true);
+  assert.equal(isBlockEditPayload({ ...edit, expectedOrientation: 20 }), true);
+  for (const invalid of [
+    { ...edit, expectedOrientation: undefined }, { ...edit, expectedOrientation: 1 },
+    { ...edit, orientation: 1 }, { ...edit, block: 7 }, { ...edit, expectedBlock: 17 },
+  ]) assert.equal(isBlockEditPayload(invalid), false);
+  assert.equal(isBlockEditPayload({ ...edit, block: 16, orientation: 20, expectedBlock: 0 }), true);
 });

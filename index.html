@@ -71,8 +71,21 @@
           </div>
         </div>
         <div class="game-footer">
-          <div class="hotbar" id="hotbar" role="toolbar" aria-label="ブロック選択"></div>
+          <section class="block-picker" id="block-picker" aria-labelledby="block-picker-title" hidden>
+            <div class="block-picker-heading">
+              <div><h2 id="block-picker-title">ブロックを選択</h2><p>ホイール／↑↓で候補 · R／Enterで確定 · Escで取消</p></div>
+              <button class="reset-button" id="cancel-block-picker" type="button">取消</button>
+            </div>
+            <div class="block-options" id="block-options" role="group" aria-label="カテゴリ内のブロック"></div>
+            <div class="block-picker-heading">
+              <output id="block-candidate" aria-live="polite"></output>
+              <button class="reset-button" id="confirm-block-picker" type="button">これにする</button>
+            </div>
+          </section>
+          <div class="hotbar" id="hotbar" role="toolbar" aria-label="ブロックのカテゴリ"></div>
           <output class="selected-block-name" id="selected-block-name" aria-live="polite">草ブロック</output>
+          <button class="reset-button" id="choose-block" type="button" aria-controls="block-picker" aria-expanded="false">建材を選ぶ · R</button>
+          <output class="block-selection-status" id="block-selection-status" role="status"></output>
           <span class="save-state" id="save-state">このブラウザーに自動保存</span>
         </div>
       </section>
@@ -80,7 +93,7 @@
       <section class="help-grid" aria-label="操作方法">
         <article class="help-item">
           <span class="help-icon" aria-hidden="true">⌨</span>
-          <div><h2>歩く・飛ぶ</h2><p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> で移動。マウスで見回し、<kbd>Space</kbd> でジャンプ。素早く2回押すと飛行ON/OFF。飛行中は長押しで上昇、<kbd>Shift</kbd> で下降、離すと浮遊します。タッチ端末は左のパッドで移動、画面右のドラッグで見回し、ジャンプ・下降ボタンで上下移動。「全画面」でゲームだけを表示できます。</p></div>
+          <div><h2>歩く・飛ぶ</h2><p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> で移動。<kbd>W</kbd> を300ms以内に二度押し、または <kbd>F</kbd>＋<kbd>W</kbd> を押している間は1.5倍速でダッシュ（飛行中も対応）。二度押しダッシュは <kbd>W</kbd> を離すと解除。マウスで見回し、<kbd>Space</kbd> でジャンプ。素早く2回押すと飛行ON/OFF。飛行中は長押しで上昇、<kbd>Shift</kbd> で下降、離すと浮遊します。タッチ端末は左のパッドで移動、画面右のドラッグで見回し、ジャンプ・下降ボタンで上下移動。「全画面」でゲームだけを表示できます。</p></div>
         </article>
         <article class="help-item">
           <span class="help-icon pickaxe" aria-hidden="true">⛏</span>
@@ -88,7 +101,7 @@
         </article>
         <article class="help-item">
           <span class="help-icon" aria-hidden="true">▦</span>
-          <div><h2>ブロックを選ぶ</h2><p>下のスロットをクリック／タッチして選択。建材欄は横スクロールできます。<kbd>1</kbd>〜<kbd>9</kbd> キーで基本の9種、横スクロールの先で赤・青・黄・緑・紫・黒の壁も選べます。窓は不透明のガラス風ブロックです。<kbd>I</kbd> で座標・性能表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
+          <div><h2>ブロックを選ぶ</h2><p><kbd>1</kbd>〜<kbd>6</kbd> で自然・地形、基本建材、階段、ハーフ、窓・ガラス、色付きのカテゴリを切り替え。前回確定した建材をカテゴリごとに覚えます。<kbd>R</kbd> で一覧を開き、ホイール／上下キーで候補、<kbd>R</kbd>／<kbd>Enter</kbd> で確定、<kbd>Esc</kbd> で取消。通常のホイールはカテゴリ切替。タッチではカテゴリをタップして選び、選択中カテゴリを再タップか「建材を選ぶ」で一覧を開き、建材をタップして確定します。一覧中は移動・採掘・設置を止めます。<kbd>7</kbd>〜<kbd>9</kbd> は未割当です。</p><p>ハーフは側面の上半分・下面なら上付き、下半分・上面なら下付き。空いた半分へ重ねると通常板材になります。階段も同じ狙い方で通常／逆さを選び、同じ高さ・上下タイプで直角につなぐと内角・外角へ自動補完します。形の変化でプレイヤーを埋める設置・採掘はできません。半段は頭上が空いていれば歩いて登れます。窓は半透明ですが通り抜けできません。<kbd>I</kbd> で座標・性能表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
         </article>
       </section>
       <p class="local-note">ひとり用ワールドはこのブラウザーに自動保存。共同建築は部屋コードで再参加すると続けられます。部屋を閉じると共有ワールドは削除されます。</p>

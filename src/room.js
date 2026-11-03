@@ -287,30 +287,40 @@ export class Room {
   }
 
   createBackupMetadata(name, snapshot) {
-    const { blocks, ...world } = snapshot.world;
+    const { blocks, orientations, ...world } = snapshot.world;
     return {
       id: newOpaqueId(12),
       name,
       createdAt: Date.now(),
       revision: snapshot.revision,
+      storageVersion: Array.isArray(orientations) ? 2 : 1,
       world,
       partCount: Math.ceil(blocks.length / WORLD_PART_SIZE),
     };
   }
 
   async writeBackupSnapshot(transaction, backup, snapshot) {
-    const { blocks } = snapshot.world;
+    const { blocks, orientations } = snapshot.world;
     for (let index = 0; index < backup.partCount; index += 1) {
       await transaction.put(
         `backup-${backup.id}-part-${index}`,
         Uint8Array.from(blocks.slice(index * WORLD_PART_SIZE, (index + 1) * WORLD_PART_SIZE)),
       );
+      if (backup.storageVersion === 2) {
+        await transaction.put(
+          `backup-${backup.id}-orientation-part-${index}`,
+          Uint8Array.from(orientations.slice(index * WORLD_PART_SIZE, (index + 1) * WORLD_PART_SIZE)),
+        );
+      }
     }
   }
 
   async deleteBackupSnapshot(transaction, backup) {
     for (let index = 0; index < backup.partCount; index += 1) {
       await transaction.delete(`backup-${backup.id}-part-${index}`);
+      if (backup.storageVersion === 2) {
+        await transaction.delete(`backup-${backup.id}-orientation-part-${index}`);
+      }
     }
   }
 
@@ -328,7 +338,25 @@ export class Room {
       }
       blocks.push(...part);
     }
-    const snapshot = { world: { ...backup.world, blocks }, revision: backup.revision };
+    const orientations = [];
+    if (backup.storageVersion === 2) {
+      const orientationParts = await Promise.all(Array.from({ length: backup.partCount }, (_, index) =>
+        this.ctx.storage.get(`backup-${backup.id}-orientation-part-${index}`)));
+      for (const [index, part] of orientationParts.entries()) {
+        if (!(part instanceof Uint8Array) || part.length !== Math.min(WORLD_PART_SIZE, length - index * WORLD_PART_SIZE)) {
+          throw new Error("Stored backup orientation part is missing or invalid.");
+        }
+        orientations.push(...part);
+      }
+    }
+    const snapshot = {
+      world: {
+        ...backup.world,
+        blocks,
+        ...(backup.storageVersion === 2 ? { orientations } : {}),
+      },
+      revision: backup.revision,
+    };
     this.validateWorldSnapshot(snapshot);
     return snapshot;
   }
@@ -356,8 +384,12 @@ export class Room {
       this.readBackupSnapshot(selected),
     ]);
     const recoveryBackup = this.createBackupMetadata("復元前の自動保存", current);
+    const restoredModel = globalThis.MoneycraftWorld.createModel({
+      width: restored.world.width, depth: restored.world.depth, height: restored.world.height,
+    });
+    if (!restoredModel.load(restored.world)) throw new Error("Stored backup world is invalid.");
     const nextSnapshot = {
-      world: restored.world,
+      world: restoredModel.serialize(),
       revision: current.revision + 1,
     };
     this.broadcast({
@@ -627,7 +659,7 @@ export class Room {
         this.validateWorldSnapshot(saved);
         return saved;
       }
-      if (saved.storageVersion !== 1 || !globalThis.MoneycraftWorld.isSupportedDimensions(saved.world)
+      if (![1, 2].includes(saved.storageVersion) || !globalThis.MoneycraftWorld.isSupportedDimensions(saved.world)
         || saved.partCount !== Math.ceil(saved.world.width * saved.world.depth * saved.world.height / WORLD_PART_SIZE)) {
         throw new Error("Stored world metadata is invalid.");
       }
@@ -641,7 +673,25 @@ export class Room {
         }
         blocks.push(...part);
       }
-      const snapshot = { world: { ...saved.world, blocks }, revision: saved.revision };
+      const orientations = [];
+      if (saved.storageVersion === 2) {
+        const orientationParts = await Promise.all(Array.from({ length: saved.partCount }, (_, index) =>
+          this.ctx.storage.get(`world-orientation-part-${index}`)));
+        for (const [index, part] of orientationParts.entries()) {
+          if (!(part instanceof Uint8Array) || part.length !== Math.min(WORLD_PART_SIZE, length - index * WORLD_PART_SIZE)) {
+            throw new Error("Stored world orientation part is missing or invalid.");
+          }
+          orientations.push(...part);
+        }
+      }
+      const snapshot = {
+        world: {
+          ...saved.world,
+          blocks,
+          ...(saved.storageVersion === 2 ? { orientations } : {}),
+        },
+        revision: saved.revision,
+      };
       this.validateWorldSnapshot(snapshot);
       return snapshot;
     }
@@ -656,30 +706,36 @@ export class Room {
   validateWorldSnapshot(snapshot) {
     const world = snapshot?.world;
     if (!globalThis.MoneycraftWorld.isSupportedDimensions(world)
-      || world.version !== globalThis.MoneycraftWorld.formatVersion
+      || ![globalThis.MoneycraftWorld.formatVersion, globalThis.MoneycraftWorld.formatVersion - 1].includes(world.version)
       || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0
       || !["legacy", "forest-plains"].includes(world.terrain ?? "legacy")
       || !Array.isArray(world.blocks) || world.blocks.length !== world.width * world.depth * world.height
-      || !world.blocks.every((block) => Number.isInteger(block) && block >= 0 && block <= globalThis.MoneycraftWorld.blocks.length)) {
+      || !world.blocks.every((block) => Number.isInteger(block) && block >= 0 && block <= globalThis.MoneycraftWorld.blocks.length)
+      || (world.version === globalThis.MoneycraftWorld.formatVersion
+        && (!Array.isArray(world.orientations) || world.orientations.length !== world.blocks.length
+          || !world.orientations.every((orientation, index) =>
+            globalThis.MoneycraftWorld.isBlockOrientation(world.blocks[index], orientation))))) {
       throw new Error("Stored room world is invalid.");
     }
   }
 
   async writeWorldSnapshot(transaction, snapshot, editedIndex = null) {
-    const { blocks, ...metadata } = snapshot.world;
+    const { blocks, orientations, ...metadata } = snapshot.world;
     const partCount = Math.ceil(blocks.length / WORLD_PART_SIZE);
     const indices = editedIndex === null ? Array.from({ length: partCount }, (_, index) => index)
       : [Math.floor(editedIndex / WORLD_PART_SIZE)];
     for (const index of indices) {
       await transaction.put(`world-part-${index}`, Uint8Array.from(blocks.slice(index * WORLD_PART_SIZE, (index + 1) * WORLD_PART_SIZE)));
+      await transaction.put(`world-orientation-part-${index}`,
+        Uint8Array.from(orientations.slice(index * WORLD_PART_SIZE, (index + 1) * WORLD_PART_SIZE)));
     }
-    await transaction.put("world", { storageVersion: 1, world: metadata, revision: snapshot.revision, partCount });
+    await transaction.put("world", { storageVersion: 2, world: metadata, revision: snapshot.revision, partCount });
   }
 
   async saveWorldSnapshot(snapshot, editedIndex = null) {
     const previous = await this.ctx.storage.get("world");
     await this.ctx.storage.transaction((transaction) =>
-      this.writeWorldSnapshot(transaction, snapshot, previous?.storageVersion === 1 ? editedIndex : null));
+      this.writeWorldSnapshot(transaction, snapshot, previous?.storageVersion === 2 ? editedIndex : null));
   }
 
   createDisplayName(sockets) {
@@ -855,11 +911,15 @@ export class Room {
     const model = this.worldModel;
     if (!model.load(snapshot.world)) throw new Error("Stored room world is invalid.");
     if (model.getBlock(edit.x, edit.y, edit.z) !== edit.expectedBlock) return reject("edit_conflict");
-    if (edit.block !== 0 && this.listPlayers().some(({ state: other }) => other
-      && edit.x < other.x + 0.28 && edit.x + 1 > other.x - 0.28
-      && edit.z < other.z + 0.28 && edit.z + 1 > other.z - 0.28
-      && edit.y < other.y + 1.7 && edit.y + 1 > other.y)) return reject("player_in_block");
-    if (!model.setBlock(edit.x, edit.y, edit.z, edit.block)) throw new Error("Validated edit could not be applied.");
+    if (edit.block === 6 && edit.expectedBlock === 16
+      && model.getOrientation(edit.x, edit.y, edit.z) !== edit.expectedOrientation) return reject("edit_conflict");
+    if (this.listPlayers().some(({ state: other }) => other
+      && model.editIntersectsBox(edit,
+        [other.x - 0.28, other.y, other.z - 0.28],
+        [other.x + 0.28, other.y + 1.7, other.z + 0.28]))) return reject("player_in_block");
+    if (!model.setBlock(edit.x, edit.y, edit.z, edit.block, edit.orientation)) {
+      throw new Error("Validated edit could not be applied.");
+    }
     const revision = snapshot.revision + 1;
     const editedIndex = (edit.y * snapshot.world.depth + edit.z) * snapshot.world.width + edit.x;
     await this.saveWorldSnapshot({ world: model.serialize(), revision }, editedIndex);

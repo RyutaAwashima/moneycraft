@@ -85,7 +85,7 @@ function createClient({
     socket.dispatchEvent(event);
   };
   const welcome = () => message({
-    v: 4, type: "welcome", payload: {
+    v: 10, type: "welcome", payload: {
       roomCode: "ABCD23", player: { id: "self", displayName: "Builder" },
       players: [], maxPlayers: 16, world: { version: 1 }, revision: 0,
     },
@@ -97,8 +97,8 @@ function createClient({
 test("browser protocol and JSON failures close using permitted application codes", () => {
   for (const [packet, expectedCode] of [
     [{ v: 3, type: "welcome" }, 4002],
-    [{ v: 4, type: "welcome", payload: {} }, 4002],
-    [{ v: 4, type: "player-state", payload: {} }, 4002],
+    [{ v: 10, type: "welcome", payload: {} }, 4002],
+    [{ v: 10, type: "player-state", payload: {} }, 4002],
     ["{invalid", 4007],
   ]) {
     const client = createClient();
@@ -169,7 +169,7 @@ test("room invitations contain only the room code and preserve the site path", (
   assert.match(image.src, /^data:image\/gif;base64,/);
   assert.match(image.alt, /ABCD23/);
   const original = image.src;
-  client.message({ v: 4, type: "player-joined", payload: { id: "other", displayName: "Other" } });
+  client.message({ v: 10, type: "player-joined", payload: { id: "other", displayName: "Other" } });
   assert.equal(image.src, original);
 });
 

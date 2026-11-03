@@ -71,7 +71,7 @@ function send(room, socket, type, payload) {
   return room.webSocketMessage(socket, JSON.stringify({ v: PROTOCOL_VERSION, type, payload }));
 }
 
-const placement = { requestId: "edit-1", x: 12, y: 16, z: 10, block: 7, expectedBlock: 0 };
+const placement = { requestId: "edit-1", x: 12, y: 16, z: 10, block: 7, orientation: 0, expectedBlock: 0 };
 
 test("room edits broadcast only after persistence and survive a new Room instance", async () => {
   const { ctx, room } = await setupRoom();
@@ -112,20 +112,20 @@ test("simultaneous edits are serialized and only one empty-cell placement wins",
   assert.equal(two.messages.at(-1).payload.code, "edit_conflict");
 });
 
-test("all colored walls synchronize, persist, rejoin and survive backup restoration", async () => {
+test("colored walls, slabs and stairs synchronize, persist, rejoin and survive backup restoration", async () => {
   const { ctx, room } = await setupRoom();
   const one = addPlayer(ctx);
   const two = addPlayer(ctx, "player-2");
-  for (let block = 10; block <= 15; block += 1) {
+  for (let block = 10; block <= 17; block += 1) {
     await send(room, one, "block-edit", {
-      ...placement, requestId: `color-${block}`, block, z: block,
+      ...placement, requestId: `color-${block}`, block, z: block === 17 ? 9 : block,
     });
     assert.equal(one.messages.at(-1).type, "block-changed");
     assert.equal(one.messages.at(-1).payload.block, block);
     assert.deepEqual(one.messages.at(-1), two.messages.at(-1));
   }
   const persisted = await room.getWorldSnapshot(123);
-  assert.equal(persisted.revision, 6);
+  assert.equal(persisted.revision, 8);
   const restarted = new Room(ctx);
   await send(restarted, two, "world-request", null);
   assert.deepEqual(two.messages.at(-1).payload, persisted);
@@ -149,21 +149,298 @@ test("all colored walls synchronize, persist, rejoin and survive backup restorat
     .every((block, index) => block === persisted.world.blocks[index]), true);
 });
 
+test("log orientation synchronizes and survives room restart and backup restoration", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  const orientation = globalThis.MoneycraftWorld.createModel(WORLD_DIMENSIONS)
+    .orientationFromNormal([1, 0, 0]);
+  const edit = { ...placement, block: 4, orientation };
+  await send(room, one, "block-edit", edit);
+  assert.equal(one.messages.at(-1).payload.orientation, orientation);
+  assert.deepEqual(one.messages.at(-1), two.messages.at(-1));
+
+  const persisted = await room.getWorldSnapshot(123);
+  const index = (edit.y * persisted.world.depth + edit.z) * persisted.world.width + edit.x;
+  assert.equal(persisted.world.orientations[index], orientation);
+  const backupResponse = await room.fetch(new Request("https://room.internal/internal/backups", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Room-Owner-Token": "a".repeat(32) },
+    body: JSON.stringify({ name: "horizontal-log" }),
+  }));
+  const { backup } = await backupResponse.json();
+  await send(new Room(ctx), two, "world-request", null);
+  assert.deepEqual(two.messages.at(-1).payload.world, persisted.world);
+  await send(room, one, "block-edit", {
+    ...edit, requestId: "mine-log", block: 0, orientation: 0, expectedBlock: 4,
+  });
+
+  const restored = await room.fetch(new Request("https://room.internal/internal/backups/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Room-Owner-Token": "a".repeat(32) },
+    body: JSON.stringify({ backupId: backup.id }),
+  }));
+  assert.equal(restored.status, 200);
+  assert.equal((await room.getWorldSnapshot(123)).world.orientations[index], orientation);
+});
+
 test("old protocol edits cannot introduce materials into an incompatible client session", async () => {
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);
-  await room.webSocketMessage(socket, JSON.stringify({
-    v: 3, type: "block-edit", payload: { ...placement, block: 10 },
-  }));
-  assert.equal(socket.messages.at(-1).v, 4);
+  for (const v of [4, 5, 6, 7, 8, 9]) {
+    await room.webSocketMessage(socket, JSON.stringify({
+      v, type: "block-edit", payload: { ...placement, block: 17 },
+    }));
+  }
+  assert.equal(socket.messages.at(-1).v, 10);
   assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
   assert.equal((await ctx.storage.get("world")).revision, 0);
+});
+
+test("server placement collision uses the slab's solid half and rejects overlaps and rotations", async () => {
+  const { ctx, room } = await setupRoom();
+  const socket = addPlayer(ctx);
+  const other = addPlayer(ctx, "on-slab", { x: 12.5, y: 16.5, z: 10.5, yaw: 0, pitch: 0 });
+  await send(room, socket, "block-edit", { ...placement, block: 16, orientation: 1 });
+  assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
+  await send(room, socket, "block-edit", { ...placement, block: 16 });
+  assert.equal(socket.messages.at(-1).type, "block-changed");
+  await send(room, socket, "block-edit", {
+    ...placement, requestId: "mine-slab", block: 0, expectedBlock: 16,
+  });
+
+  await send(room, socket, "block-edit", placement);
+  assert.equal(socket.messages.at(-1).payload.code, "player_in_block");
+  const state = other.deserializeAttachment();
+  state.state.y = 16.49;
+  other.serializeAttachment(state);
+  await send(room, socket, "block-edit", { ...placement, block: 16 });
+  assert.equal(socket.messages.at(-1).payload.code, "player_in_block");
+  assert.equal((await room.getWorldSnapshot(123)).revision, 2);
+});
+
+test("upper slabs and merged planks persist through restart and backup with orientation-aware conflicts", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  const upper = { ...placement, block: 16, orientation: 20 };
+  await send(room, one, "block-edit", upper);
+  assert.equal(one.messages.at(-1).type, "block-changed");
+  assert.deepEqual(one.messages.at(-1), two.messages.at(-1));
+  const headers = { "Content-Type": "application/json", "X-Room-Owner-Token": "a".repeat(32) };
+  const response = await room.fetch(new Request("https://room.internal/internal/backups", {
+    method: "POST", headers, body: JSON.stringify({ name: "upper-slab" }),
+  }));
+  const { backup } = await response.json();
+  const restarted = new Room(ctx);
+  const merge = { ...placement, requestId: "merge", block: 6, expectedBlock: 16, expectedOrientation: 20 };
+  await send(restarted, two, "block-edit", { ...merge, expectedOrientation: 0 });
+  assert.equal(two.messages.at(-1).payload.code, "edit_conflict");
+  await send(restarted, one, "block-edit", merge);
+  assert.equal(one.messages.at(-1).type, "block-changed");
+  await send(restarted, two, "block-edit", merge);
+  assert.equal(two.messages.at(-1).payload.code, "edit_conflict");
+  const saved = await restarted.getWorldSnapshot(123);
+  const index = (placement.y * saved.world.depth + placement.z) * saved.world.width + placement.x;
+  assert.equal(saved.world.blocks[index], 6);
+  assert.equal(saved.world.orientations[index], 0);
+  await send(new Room(ctx), two, "world-request", null);
+  assert.deepEqual(two.messages.at(-1).payload.world, saved.world);
+  const restored = await restarted.fetch(new Request("https://room.internal/internal/backups/restore", {
+    method: "POST", headers, body: JSON.stringify({ backupId: backup.id }),
+  }));
+  assert.equal(restored.status, 200);
+  const snapshot = await restarted.getWorldSnapshot(123);
+  assert.equal(snapshot.world.blocks[index], 16);
+  assert.equal(snapshot.world.orientations[index], 20);
+});
+
+test("server permits empty lower-half clearance but rejects a merge that fills a player", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const lower = { x: 12.5, y: 14.8, z: 10.5, yaw: 0, pitch: 0 };
+  addPlayer(ctx, "under-slab", lower);
+  await send(room, one, "block-edit", { ...placement, block: 16, orientation: 20 });
+  assert.equal(one.messages.at(-1).type, "block-changed");
+  await send(room, one, "block-edit", {
+    ...placement, block: 6, expectedBlock: 16, expectedOrientation: 20,
+  });
+  assert.equal(one.messages.at(-1).payload.code, "player_in_block");
+  assert.equal((await room.getWorldSnapshot(123)).revision, 1);
+});
+
+test("server stair placement tests the oriented solid union rather than the enclosing cube", async () => {
+  const { ctx, room } = await setupRoom();
+  const socket = addPlayer(ctx);
+  addPlayer(ctx, "on-low-tread", { x: 12.5, y: 16.5, z: 10.2, yaw: 0, pitch: 0 });
+  const api = globalThis.MoneycraftWorld;
+  const forward = api.orientationFromFacing([0, 0, 1]);
+  const reverse = api.orientationFromFacing([0, 0, -1]);
+  await send(room, socket, "block-edit", { ...placement, block: 17, orientation: forward });
+  assert.equal(socket.messages.at(-1).type, "block-changed");
+  await send(room, socket, "block-edit", {
+    ...placement, requestId: "mine-stair", block: 0, expectedBlock: 17,
+  });
+  await send(room, socket, "block-edit", { ...placement, block: 17, orientation: reverse });
+  assert.equal(socket.messages.at(-1).payload.code, "player_in_block");
+  await send(room, socket, "block-edit", { ...placement, block: 17, orientation: 4 });
+  assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
+  assert.equal((await room.getWorldSnapshot(123)).revision, 2);
+});
+
+test("server inverted stairs allow the lower recess but reject a solid lower step", async () => {
+  const { ctx, room } = await setupRoom();
+  const socket = addPlayer(ctx);
+  addPlayer(ctx, "under-stair", { x: 12.5, y: 14.8, z: 10.2, yaw: 0, pitch: 0 });
+  const api = globalThis.MoneycraftWorld;
+  await send(room, socket, "block-edit", {
+    ...placement, block: 17, orientation: api.orientationFromFacing([0, 0, 1], true),
+  });
+  assert.equal(socket.messages.at(-1).type, "block-changed");
+  await send(room, socket, "block-edit", {
+    ...placement, requestId: "mine-inverted", block: 0, expectedBlock: 17,
+  });
+  await send(room, socket, "block-edit", {
+    ...placement, block: 17, orientation: api.orientationFromFacing([0, 0, -1], true),
+  });
+  assert.equal(socket.messages.at(-1).payload.code, "player_in_block");
+  assert.equal((await room.getWorldSnapshot(123)).revision, 2);
+});
+
+test("all eight stair orientations survive shared edits, restart and backup restore", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  for (const [index, orientation] of globalThis.MoneycraftWorld.stairOrientations.entries()) {
+    await send(room, one, "block-edit", {
+      ...placement, requestId: `stair-${orientation}`, block: 17, orientation, z: 8 + index,
+    });
+    assert.equal(one.messages.at(-1).payload.orientation, orientation);
+    assert.deepEqual(one.messages.at(-1), two.messages.at(-1));
+  }
+  const saved = await room.getWorldSnapshot(123);
+  const headers = { "Content-Type": "application/json", "X-Room-Owner-Token": "a".repeat(32) };
+  const response = await room.fetch(new Request("https://room.internal/internal/backups", {
+    method: "POST", headers, body: JSON.stringify({ name: "eight-stair-orientations" }),
+  }));
+  assert.equal(response.status, 201);
+  const { backup } = await response.json();
+  const restarted = new Room(ctx);
+  await send(restarted, two, "world-request", null);
+  assert.deepEqual(two.messages.at(-1).payload.world, saved.world);
+  await send(restarted, one, "block-edit", {
+    ...placement, requestId: "remove-stair", block: 0, expectedBlock: 17,
+  });
+  const restored = await restarted.fetch(new Request("https://room.internal/internal/backups/restore", {
+    method: "POST", headers, body: JSON.stringify({ backupId: backup.id }),
+  }));
+  assert.equal(restored.status, 200);
+  assert.deepEqual((await restarted.getWorldSnapshot(123)).world, saved.world);
+});
+
+test("corner-expanding removal is rejected around other players and succeeds when they leave the recess", async () => {
+  const { ctx, room } = await setupRoom();
+  const socket = addPlayer(ctx);
+  const api = globalThis.MoneycraftWorld;
+  const forward = api.orientationFromFacing([0, 0, 1]);
+  const turn = api.orientationFromFacing([1, 0, 0]);
+  await send(room, socket, "block-edit", { ...placement, block: 17, orientation: forward });
+  await send(room, socket, "block-edit", { ...placement, z: 11, block: 17, orientation: turn });
+  assert.equal((await room.getWorldSnapshot(123)).revision, 2);
+  const remote = addPlayer(ctx, "in-corner-recess", { x: 11.85, y: 16.5, z: 10.85, yaw: 0, pitch: 0 });
+  const remove = { ...placement, z: 11, block: 0, expectedBlock: 17 };
+  await send(room, socket, "block-edit", remove);
+  assert.equal(socket.messages.at(-1).payload.code, "player_in_block");
+  assert.equal((await room.getWorldSnapshot(123)).revision, 2);
+  const player = remote.deserializeAttachment();
+  player.state.x = 9;
+  remote.serializeAttachment(player);
+  await send(room, socket, "block-edit", remove);
+  assert.equal(socket.messages.at(-1).type, "block-changed");
+  assert.equal(socket.messages.at(-1).payload.block, 0);
+  assert.deepEqual(socket.messages.at(-1), remote.messages.at(-1));
+  assert.equal((await room.getWorldSnapshot(123)).revision, 3);
+});
+
+test("server placement uses the proposed outer corner rather than an unconnected straight stair", async () => {
+  const { ctx, room } = await setupRoom();
+  const socket = addPlayer(ctx);
+  const api = globalThis.MoneycraftWorld;
+  await send(room, socket, "block-edit", {
+    ...placement, z: 11, block: 17, orientation: api.orientationFromFacing([1, 0, 0], true),
+  });
+  addPlayer(ctx, "under-outer-corner", { x: 11.85, y: 14.8, z: 10.85, yaw: 0, pitch: 0 });
+  await send(room, socket, "block-edit", {
+    ...placement, block: 17, orientation: api.orientationFromFacing([0, 0, 1], true),
+  });
+  assert.equal(socket.messages.at(-1).type, "block-changed");
+  assert.equal((await room.getWorldSnapshot(123)).revision, 2);
+});
+
+test("new stairs reject indirect inner-corner growth into a player, including inverted corners", async () => {
+  for (const inverted of [false, true]) {
+    const { ctx, room } = await setupRoom();
+    const socket = addPlayer(ctx);
+    const api = globalThis.MoneycraftWorld;
+    await send(room, socket, "block-edit", {
+      ...placement, block: 17, orientation: api.orientationFromFacing([0, 0, 1], inverted),
+    });
+    addPlayer(ctx, "beside-new-stair", { x: 12.85, y: inverted ? 14.8 : 16.5, z: 10.15, yaw: 0, pitch: 0 });
+    await send(room, socket, "block-edit", {
+      ...placement, z: 9, block: 17, orientation: api.orientationFromFacing([1, 0, 0], inverted),
+    });
+    assert.equal(socket.messages.at(-1).payload.code, "player_in_block");
+    assert.equal((await room.getWorldSnapshot(123)).revision, 1);
+  }
+});
+
+test("derived corners synchronize without secondary edits and survive restart, rejoin and backup restore", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  const api = globalThis.MoneycraftWorld;
+  const edits = [
+    { ...placement, block: 17, orientation: api.orientationFromFacing([0, 0, 1]) },
+    { ...placement, z: 11, block: 17, orientation: api.orientationFromFacing([1, 0, 0]) },
+    { ...placement, x: 14, block: 17, orientation: api.orientationFromFacing([0, 0, 1], true) },
+    { ...placement, x: 14, z: 9, block: 17, orientation: api.orientationFromFacing([-1, 0, 0], true) },
+  ];
+  for (const edit of edits) {
+    await send(room, one, "block-edit", edit);
+    assert.equal(one.messages.at(-1).type, "block-changed");
+    assert.deepEqual(one.messages.at(-1), two.messages.at(-1));
+  }
+  const snapshot = await room.getWorldSnapshot(123);
+  assert.equal(snapshot.revision, 4);
+  const model = api.createModel(WORLD_DIMENSIONS);
+  assert.equal(model.load(snapshot.world), true);
+  assert.match(model.getStairShape(12, 16, 10), /^outer/);
+  assert.match(model.getStairShape(14, 16, 10), /^inner/);
+  const headers = { "Content-Type": "application/json", "X-Room-Owner-Token": "a".repeat(32) };
+  const response = await room.fetch(new Request("https://room.internal/internal/backups", {
+    method: "POST", headers, body: JSON.stringify({ name: "derived-stair-corners" }),
+  }));
+  assert.equal(response.status, 201);
+  const { backup } = await response.json();
+  const restarted = new Room(ctx);
+  await send(restarted, two, "world-request", null);
+  assert.deepEqual(two.messages.at(-1).payload.world, snapshot.world);
+  await send(restarted, one, "block-edit", { ...edits[1], block: 0, orientation: 0, expectedBlock: 17 });
+  const restored = await restarted.fetch(new Request("https://room.internal/internal/backups/restore", {
+    method: "POST", headers, body: JSON.stringify({ backupId: backup.id }),
+  }));
+  assert.equal(restored.status, 200);
+  const world = (await restarted.getWorldSnapshot(123)).world;
+  assert.deepEqual(world, snapshot.world);
+  assert.equal(model.load(world), true);
+  assert.match(model.getStairShape(12, 16, 10), /^outer/);
+  assert.match(model.getStairShape(14, 16, 10), /^inner/);
 });
 
 test("invalid, distant and player-overlapping edits cannot mutate the world", async () => {
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);
-  await send(room, socket, "block-edit", { ...placement, block: 16 });
+  await send(room, socket, "block-edit", { ...placement, block: 18 });
   assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
   await send(room, socket, "block-edit", { ...placement, x: 30 });
   assert.equal(socket.messages.at(-1).payload.code, "out_of_reach");
@@ -451,7 +728,10 @@ test("legacy saved rooms preserve dimensions and buildings through transactional
   const room = new Room(ctx);
   const oldModel = globalThis.MoneycraftWorld.createModel({ ...globalThis.MoneycraftWorld.legacyOptions, seed: 123 });
   oldModel.setBlock(12, 16, 10, 9);
-  const oldSnapshot = { world: oldModel.serialize(), revision: 27 };
+  const oldWorld = oldModel.serialize();
+  oldWorld.version = 1;
+  delete oldWorld.orientations;
+  const oldSnapshot = { world: oldWorld, revision: 27 };
   await ctx.storage.put("room", { worldSeed: 123 });
   await ctx.storage.put("world", oldSnapshot);
   assert.deepEqual(await room.getWorldSnapshot(123), oldSnapshot);
@@ -468,7 +748,72 @@ test("legacy saved rooms preserve dimensions and buildings through transactional
   oldModel.setBlock(12, 16, 10, 0);
   assert.deepEqual(restored.world, oldModel.serialize());
   assert.equal(restored.revision, 28);
-  assert.equal((await ctx.storage.get("world")).storageVersion, 1);
+  assert.equal((await ctx.storage.get("world")).storageVersion, 2);
+});
+
+test("chunked version-one room storage upgrades to orientation parts on its first edit", async () => {
+  const ctx = createContext();
+  const room = new Room(ctx);
+  const model = globalThis.MoneycraftWorld.createModel({ ...globalThis.MoneycraftWorld.legacyOptions, seed: 123 });
+  model.setBlock(12, 16, 10, 4);
+  const oldWorld = model.serialize();
+  oldWorld.version = 1;
+  delete oldWorld.orientations;
+  const { blocks, ...worldMetadata } = oldWorld;
+  const partSize = 8192;
+  const partCount = Math.ceil(blocks.length / partSize);
+  await ctx.storage.put("room", { worldSeed: 123 });
+  await ctx.storage.put("world", { storageVersion: 1, world: worldMetadata, revision: 3, partCount });
+  for (let index = 0; index < partCount; index += 1) {
+    await ctx.storage.put(`world-part-${index}`,
+      Uint8Array.from(blocks.slice(index * partSize, (index + 1) * partSize)));
+  }
+  assert.deepEqual((await room.getWorldSnapshot(123)).world, oldWorld);
+
+  const socket = addPlayer(ctx);
+  await send(room, socket, "block-edit", {
+    ...placement, block: 0, expectedBlock: 4, orientation: 0,
+  });
+  const upgraded = await new Room(ctx).getWorldSnapshot(123);
+  assert.equal(upgraded.world.version, 2);
+  assert.ok(upgraded.world.orientations.every((orientation) => orientation === 0));
+  assert.equal((await ctx.storage.get("world")).storageVersion, 2);
+  assert.ok(await ctx.storage.get("world-orientation-part-0") instanceof Uint8Array);
+});
+
+test("version-one backups restore with default orientation and version-two storage", async () => {
+  const { ctx, room } = await setupRoom();
+  const model = globalThis.MoneycraftWorld.createModel(WORLD_DIMENSIONS);
+  model.setBlock(12, 16, 10, 4);
+  const oldWorld = model.serialize();
+  oldWorld.version = 1;
+  delete oldWorld.orientations;
+  const { blocks, ...worldMetadata } = oldWorld;
+  const backup = {
+    id: "0123456789abcdef01234567",
+    name: "old-format",
+    createdAt: Date.now(),
+    revision: 0,
+    world: worldMetadata,
+    partCount: Math.ceil(blocks.length / 8192),
+  };
+  await ctx.storage.put("backups", [backup]);
+  for (let index = 0; index < backup.partCount; index += 1) {
+    await ctx.storage.put(`backup-${backup.id}-part-${index}`,
+      Uint8Array.from(blocks.slice(index * 8192, (index + 1) * 8192)));
+  }
+
+  const response = await room.fetch(new Request("https://room.internal/internal/backups/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Room-Owner-Token": "a".repeat(32) },
+    body: JSON.stringify({ backupId: backup.id }),
+  }));
+  assert.equal(response.status, 200);
+  const restored = await room.getWorldSnapshot(123);
+  const index = (16 * restored.world.depth + 10) * restored.world.width + 12;
+  assert.equal(restored.world.blocks[index], 4);
+  assert.equal(restored.world.orientations[index], 0);
+  assert.equal((await ctx.storage.get("world")).storageVersion, 2);
 });
 
 test("large-room edge edits persist only the changed part and metadata", async () => {
@@ -480,7 +825,7 @@ test("large-room edge edits persist only the changed part and metadata", async (
   const edit = { ...placement, x: 63, z: 63, block: 8 };
   await send(room, socket, "block-edit", edit);
   assert.equal(socket.messages.at(-1).type, "block-changed");
-  assert.deepEqual(writes, ["world-part-8", "world"]);
+  assert.deepEqual(writes, ["world-part-8", "world-orientation-part-8", "world"]);
   const restored = await new Room(ctx).getWorldSnapshot(123);
   assert.equal(restored.world.blocks[(16 * 64 + 63) * 64 + 63], 8);
   assert.equal(restored.world.terrain, "forest-plains");

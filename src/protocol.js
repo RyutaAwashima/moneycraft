@@ -1,6 +1,6 @@
 import "../world-model.js";
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 10;
 export const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
 export const MAX_PLAYERS_PER_ROOM = 16;
 export const WORLD_DIMENSIONS = globalThis.MoneycraftWorld.defaultOptions;
@@ -8,6 +8,7 @@ export const MAX_CLIENT_MESSAGE_BYTES = 2048;
 export const MAX_PLAYER_STATE_MESSAGES_PER_SECOND = 20;
 export const MAX_BLOCK_EDIT_MESSAGES_PER_SECOND = 10;
 export const MAX_BLOCK_ID = globalThis.MoneycraftWorld.blocks.length;
+export const MAX_BLOCK_ORIENTATION = globalThis.MoneycraftWorld.orientationCount - 1;
 export const BLOCK_REACH = 6;
 
 export function isBlockEditPayload(payload, dimensions = WORLD_DIMENSIONS) {
@@ -17,9 +18,12 @@ export function isBlockEditPayload(payload, dimensions = WORLD_DIMENSIONS) {
     && Number.isInteger(payload.y) && payload.y >= 0 && payload.y < dimensions.height
     && Number.isInteger(payload.z) && payload.z >= 0 && payload.z < dimensions.depth
     && Number.isInteger(payload.block) && payload.block >= 0 && payload.block <= MAX_BLOCK_ID
+    && globalThis.MoneycraftWorld.isBlockOrientation(payload.block, payload.orientation)
     && Number.isInteger(payload.expectedBlock) && payload.expectedBlock >= 0 && payload.expectedBlock <= MAX_BLOCK_ID
     && ((payload.block === 0 && payload.expectedBlock > 0)
-      || (payload.block > 0 && payload.expectedBlock === 0));
+      || (payload.block > 0 && payload.expectedBlock === 0)
+      || (payload.block === 6 && payload.orientation === 0 && payload.expectedBlock === 16
+        && globalThis.MoneycraftWorld.isBlockOrientation(16, payload.expectedOrientation)));
 }
 
 export function isPlayerStatePayload(payload, dimensions = WORLD_DIMENSIONS) {
