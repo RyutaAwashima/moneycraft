@@ -301,8 +301,10 @@ Stairs accept four upright orientations (0-3) and four upside-down orientations
 (20-23); sideways stairs remain invalid. Existing upright stairs are unchanged. The world
 format stays at v2, including the orientation, slab and automatic stair-corner updates. These
 updates, translucent windows, smoother stepping, sprint and the category-based
-block picker are included in this release. The v10 Worker was deployed on
-2026-11-03; pushing this release publishes the matching GitHub Pages client.
+block picker were published on 2026-11-03 with the matching v10 Worker and
+GitHub Pages client (release commit `50defd5`). Production asset hashes and the
+Pages deployment were verified, along with category selection and Worker health
+from the production browser.
 Deploy the Worker first, then the matching static client, and reload all
 participating browsers. Older protocol clients cannot exchange gameplay
 messages with the new Worker.

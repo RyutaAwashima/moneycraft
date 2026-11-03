@@ -756,6 +756,10 @@
 - Workerを先行して本番デプロイ。version IDはa4582b29-c0b9-4814-aafe-7d33fdc0bfe6。
   バンドル80.16 KiB、gzip 17.22 KiB、起動13ms。health HTTP 200・protocolVersion 10、
   GitHub Pages originへのCORSと部屋作成のpreflight HTTP 204を確認。
-- このリリースをmainへコミット・pushし、GitHub Pagesで対応クライアントを配信する。
+- このリリースを`50defd5`としてmainへコミット・pushし、GitHub Pagesで対応クライアントを配信した。
   参加者全員の再読み込みが必要。保存v2はv1保存を向き0へ移行し、既存の部屋・建築を維持する。
-  公開配信の完了・本番UIの確認はpush後に行う。設定・依存の変更は行わない。
+  設定・依存の変更は行わない。
+- GitHub Pages run 41654243541の成功を確認。game.js・world-model.js・multiplayer.js・index.html・style.cssの
+  配信SHA-256がローカルと一致。本番ブラウザーでR／上下／Enterによる選択とカテゴリ間の記憶、
+  health HTTP 200・protocolVersion 10、WebGLエラー0を確認した。検証前の選択設定を復元した。
+  実複数人・実タッチ端末での新機能操作は未確認。公開結果をREADME・PROGRESS・ROADMAPにも反映。
