@@ -293,3 +293,98 @@
 - `5b28739`をmainへpushし、Pages run `41373278905`成功。
   公開index.html・multiplayer.jsが検証済みソースと完全一致。Worker health正常、プロトコルv3を確認。
   実Workerの16同時接続とタブレット16台の性能は未確認。検証用本番部屋の作成も行っていない。
+
+## 2026-11-02 — 共有・教育機能とライドの将来計画
+
+- ユーザーは、本家Minecraftに近い操作性・機能を目指しつつ教育機能を拡充し、
+  共有制作を重視する方針を提示。災害に備えるまちづくりで、堤防や命山など
+  参加者ごとの異なる発想を共同ワールドに表現したい意向。
+- 作品の名前付け・バックアップ・安全な終了と再開、基本的なビジュアル・サウンド、
+  お題・説明・発表の機能案をロードマップに記録。
+- ライドの要件を記録: 地上／飛行モード、二人搭乗、専用エディターで基本ボーンに
+  ブロック状装飾を付けて保存し、ワールド内でカスタムスキンとして表示。
+  小型マシーンのクラフト方式とミニペット育成方式の選択は保留。
+- 実装・公開・依存追加なし。ロードマップ文書の追記のみ。
+
+## 2026-11-02 — 作品の保存・再開・管理仕様
+
+- ユーザー選択: 教員復旧キーを発行、名前付き手動バックアップ最新10件、
+  退出／授業終了時は保存して完全削除と分離、部屋コード参加を維持し作品一覧なし、
+  初期は1部屋コードを1作品とする。
+- 受理編集の自動保存を継続し、全員退出・授業終了後も同じコードで再開する要件を定義。
+  復旧キーのみが教員管理操作を認可し、参加コードやQRから権限を与えない。
+- 復元では復元前状態を保護し、完全削除は専用操作と強い確認に分離。
+  10件超過時は最古を削除することを事前に通知する。
+- 既存作品の保持と作成者権限の移行、復旧キー紛失時の扱い、スナップショット容量・料金、
+  同時操作の原子性を仕様上の必須条件と未決事項に追加。
+- 実装・公開・依存追加なし。ドキュメントのみ変更。
+
+## 2026-11-02 — 復旧メールの送信方針
+
+- ユーザーはCloudflare Workerから直接メール送信し、作品の復旧をメールで管理する方針を選択。
+  GASや別メール配信サービスを初期経路にしない。
+- Cloudflare公式仕様を確認。Email Service送信にはCloudflare DNSで管理する送信ドメインが必要。
+  `cf-bounce`のMX、SPF・DKIMのTXT、ルートDMARCの追加対象があり得る一方、
+  受信・転送のEmail Routingは別機能であり、既存メールクライアントの移管は要件ではない。
+- DNS変更は慎重に扱う。既存MX/SPF/DKIM/DMARCとzoneの有無を事前確認し、
+  現状・差分・影響・ロールバック案の提示およびユーザーの個別明示承認なしに
+  レコードを参照・追加・編集しない。自動追加も承認なしには行わない。
+- 復旧方法は確認済み教員アドレスへの期限付き・一回限りの復旧リンク。
+  部屋コードだけでは管理権限を与えず、メールアドレス登録時も現行作成者権限を確認する仕様。
+- 実装、DNS操作、アカウント設定、メール送信なし。Cloudflare公式送信・ルーティング文書を
+  ロードマップに記録し、開始時に最新条件を再確認する。
+
+## 2026-11-02 — 送信ドメインの読み取り専用DNS調査
+
+- ユーザーは送信元候補として`techbridge.or.jp`を指定し、公開DNSの読み取り専用確認を明示承認。
+- NSはConoHa (`ns-a1/a2/a3.conoha.io`)、apex MXはGoogle `smtp.google.com`、
+  apex SPFは`include:_spf.conoha.ne.jp`。Googleおよびdefault selectorのDKIM TXT応答あり。
+  `_dmarc.techbridge.or.jp`のTXT応答なし。公開DNS応答のみを確認し、Cloudflareアカウントの設定や
+  レコード変更は行っていない。公開鍵その他不要なDNS値はログに保存しない。
+- Cloudflare公式の[subdomain送信設定](https://developers.cloudflare.com/email-service/configuration/subdomains/)
+  を確認。Email Sendingは送信サブドメイン単位で設定可能。
+- 親ドメイン・受信メール環境の移管は避け、`recovery.techbridge.or.jp`等の子zoneをCloudflareで作り、
+  そのzoneだけをNS委任する案を推奨候補とした。Cloudflareが発行するNS値を確認した後に、
+  追加レコードの正確な名前・値・TTL・影響とロールバック案を先に提示する。
+- DNS zone作成や親DNSへのNS追加は未実施。ユーザーの個別明示承認前に一切変更しない。
+- さらにCloudflare公式の[subdomain zone availability](https://developers.cloudflare.com/dns/zone-setups/subdomain-setup/)
+  を確認したところ、独立子zoneはEnterprise限定でFree/Pro/Businessでは使えない。
+  先のサブドメイン案はプラン条件付きへ訂正し、Cloudflareプランを確認するまでzone作成・NS変更を停止。
+  非Enterpriseでは親zone全体のDNS移管（高影響、未承認）かGAS等を改めて比較する。
+- ユーザー確認済みCloudflareプランはFree。`recovery.techbridge.or.jp`独立zoneは利用不可。
+  `techbridge.or.jp`全体のCloudflare DNS移管は高影響のため実施せず、DNSレコード変更なし。
+  既存GASまたはCloudflare DNS管理済み別ドメインを代替案として提示し、メール送信経路の選択待ち。
+
+## 2026-11-02 — GAS経由の復旧メール
+
+- ユーザーは既存GASウェブアプリを初期メール配信役にする案を選択。Workerが復旧トークンと権限を管理し、
+  GASはメール送信のみを担当する。Worker-GAS間の署名、時刻・リプレイ検証、頻度制限を要件化。
+- Worker→GASのHMAC-SHA-256 envelope、Worker secret / GAS Script Propertiesでの鍵保管、
+  timestamp・nonce検証、公開GAS URLに対する署名必須の方針を設計案として記録。
+- ユーザー決定: 同じrequest IDで一度だけ再試行。試行ごとに署名nonceは更新し、GAS側でrequest IDの処理結果を重複抑止する。
+  メール送信直後の異常終了時に同じリンクのメールが重複する可能性は許容する。
+- 実装、GAS設定、テストメール送信は未実施。Cloudflare DNS・既存NS/MX/SPF/DKIM/DMARCの変更なし。
+
+## 2026-11-02 — 復旧メール機能の実装
+
+- Durable Objectに教員メール登録・確認、期限15分の復旧token発行・一回限りの消費を追加。
+  token自体は保存せずSHA-256 hashを保存し、復旧時にowner tokenを更新して旧tokenを失効。
+- Workerにsame-originのURL検証、HMAC-SHA-256 envelope、GASへの1回再試行を追加。
+  部屋ごとのメール要求を60秒に1回、全作品横断の送信元10回/時・宛先3回/時へ制限。
+  rate-limit用Durable ObjectにはIPとメールのHMAC由来IDだけを保存。GAS URLは`script.google.com`の`/exec`形式に限定。
+- `gas/recovery-mailer.gs`を追加。署名・時刻・nonce・request IDを検証し、登録済み宛先へだけ送信。
+  Client UIでメール登録、確認リンク、復旧リンクの処理を追加。認証tokenはURL fragmentで渡して利用時にURL履歴から除去。
+- メールセキュリティスキャナーによるリンクの自動消費を避けるため、メールリンクを開くだけでは処理せず、画面上の明示確認後にtokenを送る。
+- GAS Script Properties、Cloudflare Worker secrets、GASデプロイ、テストメール送信、Worker/Pages本番デプロイは未実施。
+  DNS・MXレコード変更なし。全作品横断の送信元IP・宛先レート制限は実装・テスト済み。
+- 最終検証: Nodeテスト58件成功、JavaScript/GAS構文チェック、`git diff --check`、`wrangler deploy --dry-run`成功。
+  実メール送信の検証は未実施。
+
+## 2026-11-03 — 復旧メールの本番疎通
+
+- `clasp`でスタンドアロンApps Scriptプロジェクトを作成し、復旧メールスクリプトをpush。
+- GASの`/exec` URLとHMAC共有鍵をWorker secretsに設定。秘密値はソース・ログへ記録しない。
+- Workerを本番デプロイし、health checkでprotocol v3を確認。
+- ユーザー承認のもと、本番Worker経由でテストメールを送信。受信確認済み。
+  テスト用の一時部屋は作成後に削除。DNS・MX変更なし。
+- 教員メールUIのGitHub Pages公開は未完了。

@@ -159,6 +159,64 @@ test("only the owner can close and delete the shared world", async () => {
   assert.equal((await room.fetch(new Request("https://room.internal/connect"))).status, 404);
 });
 
+test("teacher email verification and recovery rotate owner credentials exactly once", async () => {
+  const { ctx, room } = await setupRoom();
+  const ownerHeaders = {
+    "Content-Type": "application/json",
+    "X-Room-Owner-Token": "a".repeat(32),
+  };
+  const request = (path, body, headers = {}) => room.fetch(new Request(`https://room.internal${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  }));
+
+  assert.equal((await request("/internal/teacher-email/request", { email: "Not an email" }, ownerHeaders)).status, 400);
+  assert.equal((await request("/internal/teacher-email/request", { email: "teacher@example.jp" }, {
+    ...ownerHeaders, "X-Room-Owner-Token": "b".repeat(32),
+  })).status, 403);
+
+  const emailResponse = await request("/internal/teacher-email/request", { email: " Teacher@Example.JP " }, ownerHeaders);
+  assert.equal(emailResponse.status, 200);
+  const emailChallenge = await emailResponse.json();
+  assert.equal(emailChallenge.email, "teacher@example.jp");
+  assert.equal((await ctx.storage.get("room")).pendingTeacherEmail.tokenHash.includes(emailChallenge.token), false);
+  assert.equal((await request("/internal/teacher-email/request", { email: "teacher@example.jp" }, ownerHeaders)).status, 429);
+
+  assert.equal((await request("/internal/teacher-email/verify", { token: "wrong-token" })).status, 400);
+  assert.equal((await request("/internal/teacher-email/verify", { token: emailChallenge.token })).status, 200);
+  assert.equal((await ctx.storage.get("room")).teacherEmail, "teacher@example.jp");
+
+  const recoveryResponse = await request("/internal/recovery/request", {});
+  const recovery = await recoveryResponse.json();
+  assert.equal(recovery.deliver, true);
+  assert.equal(recovery.email, "teacher@example.jp");
+  const consumeResponse = await request("/internal/recovery/consume", { token: recovery.token });
+  assert.equal(consumeResponse.status, 200);
+  const { ownerToken } = await consumeResponse.json();
+  assert.equal(typeof ownerToken, "string");
+  assert.equal((await request("/internal/recovery/consume", { token: recovery.token })).status, 400);
+
+  const oldOwner = await room.fetch(new Request("https://room.internal/internal/close", {
+    method: "POST",
+    headers: { "X-Room-Owner-Token": "a".repeat(32) },
+  }));
+  assert.equal(oldOwner.status, 403);
+  const newOwner = await room.fetch(new Request("https://room.internal/internal/close", {
+    method: "POST",
+    headers: { "X-Room-Owner-Token": ownerToken },
+  }));
+  assert.equal(newOwner.status, 200);
+});
+
+test("rooms without a verified email return the same recovery response without delivery", async () => {
+  const { room } = await setupRoom();
+  const response = await room.fetch(new Request("https://room.internal/internal/recovery/request", {
+    method: "POST",
+  }));
+  assert.deepEqual(await response.json(), { ok: true, deliver: false });
+});
+
 test("welcome includes the latest full world, and old rooms initialize deterministically", async () => {
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);

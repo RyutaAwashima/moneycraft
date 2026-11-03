@@ -5,6 +5,17 @@
   const joinButton = document.querySelector("#join-room");
   const leaveButton = document.querySelector("#leave-room");
   const closeButton = document.querySelector("#close-room");
+  const recoveryButton = document.querySelector("#request-owner-recovery");
+  const recoveryStatus = document.querySelector("#recovery-status");
+  const teacherEmailControls = document.querySelector("#teacher-email-controls");
+  const teacherEmailInput = document.querySelector("#teacher-email");
+  const teacherEmailButton = document.querySelector("#register-teacher-email");
+  const teacherEmailStatus = document.querySelector("#teacher-email-status");
+  const emailAction = document.querySelector("#email-action");
+  const emailActionMessage = document.querySelector("#email-action-message");
+  const emailActionStatus = document.querySelector("#email-action-status");
+  const confirmEmailActionButton = document.querySelector("#confirm-email-action");
+  const cancelEmailActionButton = document.querySelector("#cancel-email-action");
   const roomCodeInput = document.querySelector("#room-code");
   const roomStatus = document.querySelector("#room-status");
   const roomDetails = document.querySelector("#room-details");
@@ -27,6 +38,7 @@
   let isRoomOwner = false;
   let worldReady = false;
   let renderedInviteCode = "";
+  let pendingEmailAction = null;
   const PROTOCOL_VERSION = 3;
   const players = new Map();
 
@@ -51,9 +63,10 @@
     roomShareCode.textContent = currentRoomCode;
     updateRoomInvite();
     roomOwnerNote.textContent = isRoomOwner
-      ? "このブラウザーからワールドを閉じられます"
-      : "部屋を作成した教員だけがワールドを閉じられます";
+      ? "このブラウザーからワールドを閉じられます。復旧用の教員メールを登録できます。"
+      : "教員管理権限のある人だけがワールドを閉じられます";
     closeButton.hidden = !isRoomOwner;
+    teacherEmailControls.hidden = !isRoomOwner;
     leaveButton.disabled = !activeSocket;
     renderRoster();
   }
@@ -116,6 +129,21 @@
     const url = apiUrl(`/api/rooms/${roomCode}/connect`);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     return url;
+  }
+
+  function getReturnUrl() {
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.hash = "";
+    return url.href;
+  }
+
+  function saveOwnerSession(roomCode, ownerToken) {
+    sessionStorage.setItem(OWNER_SESSION_KEY, JSON.stringify({ roomCode, ownerToken }));
+    isRoomOwner = true;
+    currentRoomCode = roomCode;
+    roomCodeInput.value = roomCode;
+    updateRoomDetails();
   }
 
   function clearPlayers() {
@@ -342,10 +370,7 @@
       }
       currentRoomCode = result.roomCode;
       isRoomOwner = true;
-      sessionStorage.setItem(OWNER_SESSION_KEY, JSON.stringify({
-        roomCode: result.roomCode,
-        ownerToken: result.ownerToken,
-      }));
+      saveOwnerSession(result.roomCode, result.ownerToken);
       updateRoomDetails();
       connectToRoom(result.roomCode);
     } catch (error) {
@@ -415,10 +440,129 @@
     }
   }
 
+  async function registerTeacherEmail() {
+    const ownerSession = readOwnerSession();
+    const email = teacherEmailInput.value.trim();
+    if (!ownerSession || ownerSession.roomCode !== currentRoomCode || !email) {
+      teacherEmailStatus.textContent = "部屋の作成者として接続し、メールアドレスを入力してください。";
+      return;
+    }
+
+    teacherEmailButton.disabled = true;
+    teacherEmailStatus.textContent = "";
+    try {
+      await requestJson(`/api/rooms/${currentRoomCode}/teacher-email`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Room-Owner-Token": ownerSession.ownerToken,
+        },
+        body: JSON.stringify({ email, returnUrl: getReturnUrl() }),
+      });
+      teacherEmailStatus.textContent = "確認メールを送信しました。15分以内にメール内のリンクを開いてください。";
+    } catch (error) {
+      console.error("Could not request teacher email verification.", error);
+      teacherEmailStatus.textContent = `確認メールを送れませんでした: ${error.message}`;
+    } finally {
+      teacherEmailButton.disabled = false;
+    }
+  }
+
+  async function requestOwnerRecovery() {
+    const roomCode = roomCodeInput.value.trim().toUpperCase();
+    if (!ROOM_CODE_PATTERN.test(roomCode)) {
+      recoveryStatus.textContent = "復旧する部屋の6文字のコードを入力してください。";
+      roomCodeInput.focus();
+      return;
+    }
+
+    recoveryButton.disabled = true;
+    recoveryStatus.textContent = "";
+    try {
+      await requestJson(`/api/rooms/${roomCode}/recovery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ returnUrl: getReturnUrl() }),
+      });
+      recoveryStatus.textContent = "登録済みの教員メールがある場合、復旧リンクを送信しました。受信まで少しお待ちください。";
+    } catch (error) {
+      console.error("Could not request teacher recovery.", error);
+      recoveryStatus.textContent = `復旧メールを要求できませんでした: ${error.message}`;
+    } finally {
+      recoveryButton.disabled = false;
+    }
+  }
+
+  function prepareEmailAction() {
+    const match = window.location.hash.match(/^#(verify-email|recover)=([A-Za-z0-9_-]{32,64})$/);
+    if (!match) return;
+    const roomCode = new URL(window.location.href).searchParams.get("room")?.toUpperCase() || "";
+    window.history?.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    if (!ROOM_CODE_PATTERN.test(roomCode)) {
+      setStatus("メール内リンクに部屋コードがありません。最初からやり直してください。", "error");
+      return;
+    }
+    pendingEmailAction = { action: match[1], roomCode, token: match[2] };
+    emailAction.hidden = false;
+    emailActionStatus.textContent = "";
+    emailActionMessage.textContent = match[1] === "verify-email"
+      ? "教員メールアドレスを確認します。続行するとこのリンクを使用します。"
+      : "教員管理権限を復旧します。続行するとこの一回限りのリンクを使用します。";
+    setStatus("メールのリンクを確認してください。", "idle");
+  }
+
+  async function completeEmailAction() {
+    if (!pendingEmailAction) return;
+    const { action, roomCode, token } = pendingEmailAction;
+    confirmEmailActionButton.disabled = true;
+    cancelEmailActionButton.disabled = true;
+    emailActionStatus.textContent = "";
+    try {
+      if (action === "verify-email") {
+        await requestJson(`/api/rooms/${roomCode}/teacher-email/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        pendingEmailAction = null;
+        emailAction.hidden = true;
+        setStatus("教員メールアドレスを確認しました。このブラウザーの作成者権限は維持されています。", "connected");
+        return;
+      }
+
+      const result = await requestJson(`/api/rooms/${roomCode}/recovery/consume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      if (typeof result.ownerToken !== "string") throw new Error("復旧応答に作成者権限がありません");
+      saveOwnerSession(roomCode, result.ownerToken);
+      pendingEmailAction = null;
+      emailAction.hidden = true;
+      connectToRoom(roomCode);
+      setStatus("教員管理権限を復旧しました。", "connected");
+    } catch (error) {
+      console.error("Could not complete the room recovery link.", error);
+      emailActionStatus.textContent = `リンクを処理できませんでした: ${error.message}`;
+    } finally {
+      confirmEmailActionButton.disabled = false;
+      cancelEmailActionButton.disabled = false;
+    }
+  }
+
+  function cancelEmailAction() {
+    pendingEmailAction = null;
+    emailAction.hidden = true;
+    emailActionMessage.textContent = "";
+    emailActionStatus.textContent = "";
+  }
+
   function setButtonsDisabled(disabled) {
     createButton.disabled = disabled;
     joinButton.disabled = disabled;
     closeButton.disabled = disabled;
+    recoveryButton.disabled = disabled;
+    teacherEmailButton.disabled = disabled;
   }
 
   roomCodeInput.addEventListener("input", () => {
@@ -431,6 +575,10 @@
   joinButton.addEventListener("click", joinRoom);
   leaveButton.addEventListener("click", leaveRoom);
   closeButton.addEventListener("click", closeRoom);
+  recoveryButton.addEventListener("click", requestOwnerRecovery);
+  teacherEmailButton.addEventListener("click", registerTeacherEmail);
+  confirmEmailActionButton.addEventListener("click", completeEmailAction);
+  cancelEmailActionButton.addEventListener("click", cancelEmailAction);
   window.addEventListener("moneycraft:send-player-state", sendPlayerState);
   window.addEventListener("moneycraft:send-block-edit", (event) => sendWorldMessage("block-edit", event.detail));
   window.addEventListener("moneycraft:request-world", () => sendWorldMessage("world-request", null));
@@ -458,4 +606,5 @@
       setStatus("参加用リンクの部屋コードが正しくありません。6文字のコードを確認してください。", "error");
     }
   }
+  prepareEmailAction();
 })();

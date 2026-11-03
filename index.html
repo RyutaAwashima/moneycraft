@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#172b25">
     <meta name="description" content="ブラウザーで遊べる、オリジナルのブロック建築ゲーム。">
+    <meta name="referrer" content="no-referrer">
     <title>Moneycraft — ブロックの世界</title>
     <link rel="stylesheet" href="./style.css">
     <script src="./config.js" defer></script>
@@ -42,8 +43,16 @@
           <label class="room-code-label" for="room-code">部屋コード</label>
           <input class="room-code-input" id="room-code" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="6" placeholder="例: ABC123" aria-label="参加する部屋コード">
           <button class="room-button room-join" id="join-room" type="button">参加する</button>
+          <button class="room-button room-recovery-button" id="request-owner-recovery" type="button">教員権限の復旧メール</button>
         </div>
         <div class="room-status" id="room-status" role="status" aria-live="polite">部屋を作るか、招待コードを入力して参加できます。</div>
+        <p class="room-recovery-note" id="recovery-status" role="status" aria-live="polite"></p>
+        <div class="email-action" id="email-action" hidden>
+          <p id="email-action-message"></p>
+          <button class="room-button room-create" id="confirm-email-action" type="button">確認して続ける</button>
+          <button class="room-button" id="cancel-email-action" type="button">キャンセル</button>
+          <span id="email-action-status" role="status" aria-live="polite"></span>
+        </div>
         <p class="multiplayer-note">同じ部屋では建築とプレイヤーの位置を共有します。建築は作成者が部屋を閉じるまでサーバーに保存されます。退出後は元のひとり用ワールドに戻ります。</p>
         <div class="room-details" id="room-details" hidden>
           <div class="room-share">
@@ -63,6 +72,14 @@
             <span id="room-owner-note"></span>
             <button class="room-button room-leave" id="leave-room" type="button">退出</button>
             <button class="room-button room-close" id="close-room" type="button" hidden>ワールドを閉じる</button>
+          </div>
+          <div class="teacher-email-controls" id="teacher-email-controls" hidden>
+            <label for="teacher-email">教員のメールアドレス（確認が必要）</label>
+            <div class="teacher-email-actions">
+              <input id="teacher-email" type="email" autocomplete="email" maxlength="254" placeholder="teacher@example.jp">
+              <button class="room-button" id="register-teacher-email" type="button">確認メールを送る</button>
+            </div>
+            <span id="teacher-email-status" role="status" aria-live="polite"></span>
           </div>
         </div>
       </section>

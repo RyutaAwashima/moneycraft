@@ -113,8 +113,45 @@ restarts until the owner closes the room, which deletes the shared world.
 Keep the room code to resume; no export, reopening of closed rooms, or
 automatic room expiry is implemented.
 
+## Teacher recovery email
+
+The local implementation supports verified teacher email registration and
+one-time owner recovery links. Recovery tokens are stored as hashes in the
+room Durable Object and expire after 15 minutes. A room can request one
+verification or recovery email per minute. Cross-room limits cap requests at
+10 per source per hour and 3 per recipient per hour; only keyed hashes, not
+the raw source IP or email address, are stored in the rate-limit object. Room
+codes alone do not grant owner privileges.
+
+The production Worker forwards signed email requests to Google Apps Script.
+To configure a new environment:
+
+1. Create or open the Apps Script project and add the source from
+   [`gas/recovery-mailer.gs`](./gas/recovery-mailer.gs).
+2. In **Project Settings → Script properties**, add
+   `RECOVERY_HMAC_SECRET` with a randomly generated secret of at least 32
+   characters. Do not put it in source control or send it in chat.
+3. Deploy as a web app that executes as the owner. If the deployment must
+   accept requests from anyone, the HMAC verification in `doPost` is mandatory;
+   the URL alone is not authorization. Authorize only the mail-sending scope.
+4. Add the web app `/exec` URL and the exact same secret to the Cloudflare
+   Worker secrets `RECOVERY_MAILER_URL` and `RECOVERY_MAILER_HMAC_SECRET`.
+   Set Worker secrets through Wrangler's interactive secret prompts, never in
+   `wrangler.jsonc`.
+5. Test the deployment and mail delivery only after reviewing the recipient,
+   sender identity, Google sending limits, and deployment access settings.
+
+The Worker signs each request with HMAC-SHA-256. GAS checks a five-minute
+timestamp window, a one-time nonce, and an idempotency request ID; Worker retries
+once with a new nonce and the same request ID. In case the mail service accepts
+an email but GAS stops before saving the result, the same link may arrive twice.
+Opening a link does not consume it automatically; the page asks the user to
+confirm first to avoid mail-security scanners consuming one-time links.
+No DNS or MX change is required. This repository does not contain deployment
+secrets, and no mail is sent by the test suite.
+
 Run the focused tests with
-`node --test world-model.test.js game.test.js multiplayer.test.js src/protocol.test.js src/room.test.js`.
+`node --test world-model.test.js game.test.js multiplayer.test.js src/protocol.test.js src/room.test.js src/worker.test.js src/recovery-mailer.test.js`.
 
 Run `wrangler dev --ip 127.0.0.1 --port 49180` and `node dev-server.js` in separate terminals
 to test the room service and game locally. The page is available at

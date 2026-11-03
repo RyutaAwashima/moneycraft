@@ -293,6 +293,73 @@ h1 {
   gap: 7px;
 }
 
+.room-recovery-button {
+  margin-left: auto;
+}
+
+.room-recovery-note,
+.teacher-email-controls > span,
+.email-action > p,
+.email-action > span {
+  color: #77847b;
+  font-size: 11px;
+}
+
+.room-recovery-note:empty,
+.teacher-email-controls > span:empty,
+.email-action > span:empty {
+  display: none;
+}
+
+.teacher-email-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 6px;
+  max-width: 460px;
+}
+
+.email-action {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #dce8da;
+  border-radius: 8px;
+  background: #f7faf5;
+}
+
+.email-action > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.email-action > span {
+  flex-basis: 100%;
+}
+
+.teacher-email-controls label {
+  color: #68776c;
+  font-size: 11px;
+}
+
+.teacher-email-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.teacher-email-actions input {
+  flex: 1 1 210px;
+  min-width: 0;
+  min-height: 37px;
+  padding: 0 10px;
+  border: 1px solid #dce4da;
+  border-radius: 7px;
+  font: inherit;
+}
+
 .room-close {
   border-color: #ecd8d2;
   color: #9a5445;
@@ -830,6 +897,10 @@ kbd {
   .room-management {
     grid-column: 1 / -1;
     justify-content: flex-start;
+  }
+
+  .room-recovery-button {
+    margin-left: 0;
   }
 
   .help-grid {

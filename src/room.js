@@ -12,6 +12,11 @@ import {
 
 const OWNER_TOKEN_HEADER = "x-room-owner-token";
 const WORLD_PART_SIZE = 8192;
+const EMAIL_REQUEST_COOLDOWN_MS = 60_000;
+const EMAIL_TOKEN_TTL_MS = 15 * 60_000;
+const EMAIL_RATE_WINDOW_MS = 60 * 60_000;
+const EMAIL_SOURCE_RATE_LIMIT = 10;
+const EMAIL_RECIPIENT_RATE_LIMIT = 3;
 const DISPLAY_NAME_PREFIXES = [
   "こもれび",
   "ひだまり",
@@ -42,12 +47,33 @@ function newOpaqueId(byteLength = 16) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function newOpaqueToken(byteLength = 32) {
+  const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
 function digestToken(token) {
   return crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
 }
 
 function toHex(buffer) {
   return Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function matchesHash(value, expected) {
+  if (typeof value !== "string" || typeof expected !== "string" || value.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    difference |= value.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+function isValidEmail(email) {
+  return typeof email === "string" && email.length <= 254
+    && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email);
 }
 
 export class Room {
@@ -66,6 +92,21 @@ export class Room {
     }
     if (url.pathname === "/internal/close" && request.method === "POST") {
       return this.closeRoom(request);
+    }
+    if (url.pathname === "/internal/teacher-email/request" && request.method === "POST") {
+      return this.requestTeacherEmail(request);
+    }
+    if (url.pathname === "/internal/teacher-email/verify" && request.method === "POST") {
+      return this.verifyTeacherEmail(request);
+    }
+    if (url.pathname === "/internal/recovery/request" && request.method === "POST") {
+      return this.requestRecovery(request);
+    }
+    if (url.pathname === "/internal/recovery/consume" && request.method === "POST") {
+      return this.consumeRecovery(request);
+    }
+    if (url.pathname === "/internal/email-rate-limit" && request.method === "POST") {
+      return this.rateLimitEmailRequests(request);
     }
     if (url.pathname === "/connect" && request.method === "GET") {
       return this.connect(request);
@@ -101,7 +142,7 @@ export class Room {
     if (!room) return jsonResponse({ error: "room_not_found" }, 404);
 
     const token = request.headers.get(OWNER_TOKEN_HEADER);
-    if (!token || toHex(await digestToken(token)) !== room.ownerTokenHash) {
+    if (!token || !matchesHash(toHex(await digestToken(token)), room.ownerTokenHash)) {
       return jsonResponse({ error: "forbidden" }, 403);
     }
 
@@ -110,6 +151,174 @@ export class Room {
     }
     await this.ctx.storage.deleteAll();
     return jsonResponse({ ok: true });
+  }
+
+  async requestTeacherEmail(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "room_not_found" }, 404);
+    const ownerToken = request.headers.get(OWNER_TOKEN_HEADER);
+    if (!ownerToken || !matchesHash(toHex(await digestToken(ownerToken)), room.ownerTokenHash)) {
+      return jsonResponse({ error: "forbidden" }, 403);
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid_request" }, 400);
+    }
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!isValidEmail(email)) return jsonResponse({ error: "invalid_email" }, 400);
+
+    const now = Date.now();
+    if (now - (room.teacherEmailRequestAt || 0) < EMAIL_REQUEST_COOLDOWN_MS) {
+      return jsonResponse({ error: "rate_limited" }, 429);
+    }
+
+    const token = newOpaqueToken();
+    const requestId = newOpaqueId();
+    room.teacherEmailRequestAt = now;
+    room.pendingTeacherEmail = {
+      email,
+      tokenHash: toHex(await digestToken(token)),
+      expiresAt: now + EMAIL_TOKEN_TTL_MS,
+      requestId,
+    };
+    await this.ctx.storage.put("room", room);
+    return jsonResponse({
+      deliver: true,
+      email,
+      token,
+      requestId,
+      expiresAt: room.pendingTeacherEmail.expiresAt,
+    });
+  }
+
+  async verifyTeacherEmail(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "room_not_found" }, 404);
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid_request" }, 400);
+    }
+    const token = body?.token;
+    const pending = room.pendingTeacherEmail;
+    if (typeof token !== "string" || !pending || pending.expiresAt <= Date.now()
+      || !matchesHash(toHex(await digestToken(token)), pending.tokenHash)) {
+      return jsonResponse({ error: "invalid_or_expired_token" }, 400);
+    }
+
+    room.teacherEmail = pending.email;
+    delete room.pendingTeacherEmail;
+    await this.ctx.storage.put("room", room);
+    return jsonResponse({ ok: true });
+  }
+
+  async requestRecovery(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room?.teacherEmail) return jsonResponse({ ok: true, deliver: false });
+
+    const now = Date.now();
+    if (now - (room.recoveryRequestAt || 0) < EMAIL_REQUEST_COOLDOWN_MS) {
+      return jsonResponse({ ok: true, deliver: false });
+    }
+
+    const token = newOpaqueToken();
+    const requestId = newOpaqueId();
+    room.recoveryRequestAt = now;
+    room.recoveryTokenHash = toHex(await digestToken(token));
+    room.recoveryTokenExpiresAt = now + EMAIL_TOKEN_TTL_MS;
+    room.recoveryRequestId = requestId;
+    await this.ctx.storage.put("room", room);
+    return jsonResponse({
+      ok: true,
+      deliver: true,
+      email: room.teacherEmail,
+      token,
+      requestId,
+      expiresAt: room.recoveryTokenExpiresAt,
+    });
+  }
+
+  async consumeRecovery(request) {
+    const room = await this.ctx.storage.get("room");
+    if (!room) return jsonResponse({ error: "invalid_or_expired_token" }, 400);
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid_request" }, 400);
+    }
+    const token = body?.token;
+    if (typeof token !== "string" || !room.recoveryTokenHash
+      || room.recoveryTokenExpiresAt <= Date.now()
+      || !matchesHash(toHex(await digestToken(token)), room.recoveryTokenHash)) {
+      return jsonResponse({ error: "invalid_or_expired_token" }, 400);
+    }
+
+    const ownerToken = newOpaqueToken();
+    room.ownerTokenHash = toHex(await digestToken(ownerToken));
+    delete room.recoveryTokenHash;
+    delete room.recoveryTokenExpiresAt;
+    delete room.recoveryRequestId;
+    delete room.pendingTeacherEmail;
+    await this.ctx.storage.put("room", room);
+    return jsonResponse({ ok: true, ownerToken });
+  }
+
+  async rateLimitEmailRequests(request) {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid_request" }, 400);
+    }
+    if (!Array.isArray(body?.buckets) || body.buckets.length < 1 || body.buckets.length > 2
+      || !body.buckets.every((bucket) => bucket && ["source", "recipient"].includes(bucket.scope)
+        && /^[A-Za-z0-9_-]{20,64}$/.test(bucket.id || ""))) {
+      return jsonResponse({ error: "invalid_request" }, 400);
+    }
+    const scopes = body.buckets.map((bucket) => bucket.scope);
+    if (new Set(scopes).size !== scopes.length) return jsonResponse({ error: "invalid_request" }, 400);
+
+    const now = Date.now();
+    const entries = await Promise.all(body.buckets.map(async ({ scope, id }) => {
+      const key = `email-rate-limit:${scope}:${id}`;
+      const limit = scope === "source" ? EMAIL_SOURCE_RATE_LIMIT : EMAIL_RECIPIENT_RATE_LIMIT;
+      const existing = await this.ctx.storage.get(key);
+      const timestamps = (Array.isArray(existing?.timestamps) ? existing.timestamps : [])
+        .filter((timestamp) => Number.isSafeInteger(timestamp) && timestamp > now - EMAIL_RATE_WINDOW_MS);
+      return { key, scope, limit, timestamps };
+    }));
+    const blocked = entries.find((entry) => entry.timestamps.length >= entry.limit);
+    if (blocked) {
+      return jsonResponse({
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((blocked.timestamps[0] + EMAIL_RATE_WINDOW_MS - now) / 1000)),
+      });
+    }
+
+    for (const entry of entries) {
+      await this.ctx.storage.put(entry.key, {
+        timestamps: [...entry.timestamps, now],
+        updatedAt: now,
+      });
+    }
+    const checkCount = Number(await this.ctx.storage.get("email-rate-limit:checks")) || 0;
+    await this.ctx.storage.put("email-rate-limit:checks", checkCount + 1);
+    if (checkCount % 100 === 0 && typeof this.ctx.storage.list === "function") {
+      const values = await this.ctx.storage.list({ prefix: "email-rate-limit:" });
+      for (const [key, value] of values) {
+        if (key !== "email-rate-limit:checks" && value?.updatedAt <= now - EMAIL_RATE_WINDOW_MS) {
+          await this.ctx.storage.delete(key);
+        }
+      }
+    }
+    return jsonResponse({ allowed: true });
   }
 
   async connect(request) {

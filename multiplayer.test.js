@@ -6,7 +6,13 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function createClient({ href = "https://example.test/moneycraft/", autoJoin = true, qrAvailable = true, ownerSession = null } = {}) {
+function createClient({
+  href = "https://example.test/moneycraft/",
+  autoJoin = true,
+  qrAvailable = true,
+  ownerSession = null,
+  fetchImpl = async () => { throw new Error("Unexpected request"); },
+} = {}) {
   class Element extends EventTarget {
     value = "";
     textContent = "";
@@ -36,6 +42,9 @@ function createClient({ href = "https://example.test/moneycraft/", autoJoin = tr
   const elements = new Map();
   const window = new EventTarget();
   window.location = new URL(href);
+  window.history = {
+    replaceState(_state, _title, url) { window.location = new URL(url, window.location.href); },
+  };
   const document = {
     querySelector(selector) {
       if (!elements.has(selector)) elements.set(selector, new Element());
@@ -43,9 +52,15 @@ function createClient({ href = "https://example.test/moneycraft/", autoJoin = tr
     },
     createElement: () => new Element(),
   };
+  const sessions = new Map(ownerSession ? [["moneycraft-room-owner-v1", JSON.stringify(ownerSession)]] : []);
   const context = {
     window, document, WebSocket: Socket, CustomEvent, URL,
-    sessionStorage: { getItem: () => ownerSession ? JSON.stringify(ownerSession) : null },
+    fetch: fetchImpl,
+    sessionStorage: {
+      getItem: (key) => sessions.get(key) ?? null,
+      setItem: (key, value) => sessions.set(key, value),
+      removeItem: (key) => sessions.delete(key),
+    },
     console: { error() {}, warn() {} },
   };
   vm.createContext(context);
@@ -71,7 +86,7 @@ function createClient({ href = "https://example.test/moneycraft/", autoJoin = tr
     },
   });
   const emit = (type, detail) => window.dispatchEvent(new CustomEvent(`moneycraft:${type}`, { detail }));
-  return { socket, sockets, message, welcome, emit, elements, window };
+  return { socket, sockets, message, welcome, emit, elements, window, sessions };
 }
 
 test("browser protocol and JSON failures close using permitted application codes", () => {
@@ -169,4 +184,52 @@ test("room closure clears the old QR image and invitation link", () => {
   assert.equal(client.elements.get("#room-qr").src, undefined);
   assert.equal(client.elements.get("#room-invite-link").hidden, true);
   assert.equal(client.elements.get("#room-invite-link").href, undefined);
+});
+
+test("recovery links consume the token once and save the replacement owner credential", async () => {
+  const calls = [];
+  const client = createClient({
+    href: `https://example.test/moneycraft/?room=ABCD23#recover=${"t".repeat(43)}`,
+    autoJoin: false,
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      return { ok: true, status: 200, json: async () => ({ ok: true, ownerToken: "restored-owner-token" }) };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 0);
+  assert.equal(client.elements.get("#email-action").hidden, false);
+  client.elements.get("#confirm-email-action").dispatchEvent(new Event("click"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/api\/rooms\/ABCD23\/recovery\/consume$/);
+  assert.equal(JSON.parse(calls[0].options.body).token, "t".repeat(43));
+  assert.equal(client.sessions.get("moneycraft-room-owner-v1"), JSON.stringify({
+    roomCode: "ABCD23",
+    ownerToken: "restored-owner-token",
+  }));
+  assert.equal(client.window.location.hash, "");
+  assert.equal(client.sockets.length, 1);
+  assert.equal(client.elements.get("#close-room").hidden, false);
+});
+
+test("teacher email verification links send only the one-time token to the API", async () => {
+  const calls = [];
+  const client = createClient({
+    href: `https://example.test/moneycraft/?room=ABCD23#verify-email=${"v".repeat(43)}`,
+    autoJoin: false,
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 0);
+  client.elements.get("#confirm-email-action").dispatchEvent(new Event("click"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/api\/rooms\/ABCD23\/teacher-email\/verify$/);
+  assert.deepEqual(JSON.parse(calls[0].options.body), { token: "v".repeat(43) });
+  assert.equal(client.sessions.has("moneycraft-room-owner-v1"), false);
+  assert.match(client.elements.get("#room-status").textContent, /メールアドレスを確認しました/);
 });
