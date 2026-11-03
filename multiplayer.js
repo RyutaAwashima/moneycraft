@@ -1,6 +1,10 @@
 "use strict";
 
 (() => {
+  const buildTab = document.querySelector("#build-tab");
+  const roomTab = document.querySelector("#room-tab");
+  const buildView = document.querySelector("#build-view");
+  const roomView = document.querySelector("#room-view");
   const createButton = document.querySelector("#create-room");
   const joinButton = document.querySelector("#join-room");
   const leaveButton = document.querySelector("#leave-room");
@@ -53,6 +57,28 @@
   let activePlayerCount = 0;
   const PROTOCOL_VERSION = 3;
   const players = new Map();
+
+  function selectWorkspaceTab(tabName, focus = false) {
+    const showBuild = tabName === "build";
+    buildTab.setAttribute("aria-selected", String(showBuild));
+    roomTab.setAttribute("aria-selected", String(!showBuild));
+    buildTab.tabIndex = showBuild ? 0 : -1;
+    roomTab.tabIndex = showBuild ? -1 : 0;
+    buildView.hidden = !showBuild;
+    roomView.hidden = showBuild;
+    if (focus) (showBuild ? buildTab : roomTab).focus();
+  }
+
+  function handleWorkspaceTabKeydown(event) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    let tabName;
+    if (event.key === "Home") tabName = "build";
+    else if (event.key === "End") tabName = "rooms";
+    else if (event.key === "ArrowRight") tabName = event.currentTarget === buildTab ? "rooms" : "build";
+    else tabName = event.currentTarget === roomTab ? "build" : "rooms";
+    selectWorkspaceTab(tabName, true);
+  }
 
   function setStatus(text, state = "idle") {
     roomStatus.textContent = text;
@@ -712,6 +738,7 @@
   function prepareEmailAction() {
     const match = window.location.hash.match(/^#(verify-email|recover)=([A-Za-z0-9_-]{32,64})$/);
     if (!match) return;
+    selectWorkspaceTab("rooms");
     const roomCode = new URL(window.location.href).searchParams.get("room")?.toUpperCase() || "";
     window.history?.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     if (!ROOM_CODE_PATTERN.test(roomCode)) {
@@ -801,6 +828,11 @@
   teacherEmailButton.addEventListener("click", registerTeacherEmail);
   confirmEmailActionButton.addEventListener("click", completeEmailAction);
   cancelEmailActionButton.addEventListener("click", cancelEmailAction);
+  buildTab.addEventListener("click", () => selectWorkspaceTab("build"));
+  roomTab.addEventListener("click", () => selectWorkspaceTab("rooms"));
+  buildTab.addEventListener("keydown", handleWorkspaceTabKeydown);
+  roomTab.addEventListener("keydown", handleWorkspaceTabKeydown);
+  selectWorkspaceTab("build");
   window.addEventListener("moneycraft:send-player-state", sendPlayerState);
   window.addEventListener("moneycraft:send-block-edit", (event) => sendWorldMessage("block-edit", event.detail));
   window.addEventListener("moneycraft:request-world", () => sendWorldMessage("world-request", null));
@@ -823,6 +855,7 @@
     const code = invitedRoom.trim().toUpperCase();
     if (ROOM_CODE_PATTERN.test(code)) {
       roomCodeInput.value = code;
+      selectWorkspaceTab("rooms");
       setStatus(`招待された部屋 ${code} に入るには「参加する」を押してください。`);
     } else {
       setStatus("参加用リンクの部屋コードが正しくありません。6文字のコードを確認してください。", "error");

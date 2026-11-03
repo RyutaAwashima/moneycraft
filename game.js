@@ -4,6 +4,7 @@
   const canvas = document.querySelector("#game");
   const gl = canvas.getContext("webgl", { antialias: true, alpha: false });
   const hotbar = document.querySelector("#hotbar");
+  const selectedBlockName = document.querySelector("#selected-block-name");
   const message = document.querySelector("#game-message");
   const debugIndicator = document.querySelector("#debug-indicator");
   const virtualStick = document.querySelector("#virtual-stick");
@@ -33,12 +34,15 @@
   const JUMP_SPEED = 7.8;
   const FLIGHT_SPEED = 4.5;
   const DOUBLE_JUMP_MS = 300;
+  const CONTINUOUS_EDIT_INTERVAL_MS = 200;
+  const CONTINUOUS_EDIT_RETRY_MS = 50;
   const blocks = globalThis.MoneycraftWorld.blocks;
   let worldModel = globalThis.MoneycraftWorld.createModel(globalThis.MoneycraftWorld.defaultOptions);
   const keys = new Set();
   const touchPointers = new Map();
   const touchMove = { x: 0, z: 0 };
   const heldTouchActions = new Map();
+  let activeBlockAction = null;
   let lastJumpTime = -Infinity;
   let expanded = false;
   const faces = [
@@ -62,6 +66,8 @@
   let program;
   let avatarPositionBuffer;
   let avatarColorBuffer;
+  let targetPositionBuffer;
+  let targetColorBuffer;
   let positionAttribute;
   let colorAttribute;
   let uvAttribute;
@@ -69,6 +75,16 @@
   let atlasCanvas;
   const CHUNK_SIZE = 8;
   const chunkMeshes = new Map();
+  const TARGET_OUTLINE_EDGES = [
+    [0, 1], [1, 2], [2, 3], [3, 0],
+    [4, 5], [5, 6], [6, 7], [7, 4],
+    [0, 4], [1, 5], [2, 6], [3, 7],
+  ];
+  const targetPositions = new Float32Array(72);
+  const targetColors = new Float32Array(72);
+  for (let index = 0; index < targetColors.length; index += 3) {
+    targetColors.set([1, 0.78, 0.16], index);
+  }
   let lastTime = 0;
   let saveTimer = 0;
   let debugTimer = 0;
@@ -164,6 +180,7 @@
 
   function requestWorldSnapshot() {
     if (roomMode !== "shared" || awaitingSnapshot) return;
+    stopBlockAction();
     awaitingSnapshot = true;
     clearPendingEdits();
     saveState.textContent = "共有ワールドを再同期中";
@@ -233,6 +250,7 @@
     }
     window.clearTimeout(pendingEdits.get(rejection.requestId));
     pendingEdits.delete(rejection.requestId);
+    stopBlockAction();
     const reasons = {
       rate_limited: "操作が速すぎます。少し待ってください",
       out_of_reach: "置きたい・掘りたい場所に近づいてください",
@@ -247,7 +265,7 @@
   function changeBlock(x, y, z, block) {
     if (roomMode === "connecting" || awaitingSnapshot) {
       message.textContent = "共有ワールドの読み込み完了を待ってください";
-      return;
+      return false;
     }
     if (roomMode === "shared") {
       const requestId = crypto.randomUUID();
@@ -258,12 +276,13 @@
       message.textContent = "建築の変更を送信中";
       sendCurrentPlayerState();
       emitWorldEvent("send-block-edit", { requestId, x, y, z, block, expectedBlock: getBlock(x, y, z) });
-      return;
+      return true;
     }
     setBlock(x, y, z, block);
     updateWorldMesh(x, y, z);
     saveGame();
     message.textContent = block === 0 ? "ブロックを掘りました" : `${blocks[block - 1].name}を置きました`;
+    return true;
   }
 
   function inBounds(x, y, z) {
@@ -335,8 +354,10 @@
     gl.enableVertexAttribArray(colorAttribute);
     avatarPositionBuffer = gl.createBuffer();
     avatarColorBuffer = gl.createBuffer();
-    if (!avatarPositionBuffer || !avatarColorBuffer) {
-      throw new Error("Could not create multiplayer avatar buffers.");
+    targetPositionBuffer = gl.createBuffer();
+    targetColorBuffer = gl.createBuffer();
+    if (!avatarPositionBuffer || !avatarColorBuffer || !targetPositionBuffer || !targetColorBuffer) {
+      throw new Error("Could not create world rendering buffers.");
     }
     initializeTextures();
   }
@@ -527,6 +548,7 @@
   }
 
   function buildHotbar() {
+    selectedBlockName.textContent = blocks[selectedBlock - 1].name;
     for (const [index, block] of blocks.entries()) {
       const button = document.createElement("button");
       button.className = "hotbar-slot";
@@ -556,6 +578,7 @@
     for (const [index, button] of [...hotbar.children].entries()) {
       button.setAttribute("aria-pressed", String(blocks[index].id === id));
     }
+    selectedBlockName.textContent = blocks[id - 1].name;
     message.textContent = `${blocks[id - 1].name}を選択中`;
   }
 
@@ -657,7 +680,36 @@
     gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 0);
     gl.disableVertexAttribArray(uvAttribute);
     gl.vertexAttrib2f(uvAttribute, 0, 0);
+    renderTargetOutline();
     renderRemotePlayers(viewProjection);
+  }
+
+  function renderTargetOutline() {
+    const target = raycast();
+    if (!target) return;
+    const left = target.x - 0.003;
+    const bottom = target.y - 0.003;
+    const back = target.z - 0.003;
+    const right = target.x + 1.003;
+    const top = target.y + 1.003;
+    const front = target.z + 1.003;
+    const corners = [
+      [left, bottom, back], [right, bottom, back], [right, top, back], [left, top, back],
+      [left, bottom, front], [right, bottom, front], [right, top, front], [left, top, front],
+    ];
+    let offset = 0;
+    for (const [start, end] of TARGET_OUTLINE_EDGES) {
+      targetPositions.set(corners[start], offset);
+      targetPositions.set(corners[end], offset + 3);
+      offset += 6;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, targetPositionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, targetPositions, gl.DYNAMIC_DRAW);
+    gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, targetColorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, targetColors, gl.DYNAMIC_DRAW);
+    gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.LINES, 0, targetPositions.length / 3);
   }
 
   function isRemotePlayerState(state) {
@@ -1000,16 +1052,16 @@
     const target = raycast();
     if (!target) {
       message.textContent = "照準を近くのブロックに合わせてね";
-      return;
+      return false;
     }
-    changeBlock(target.x, target.y, target.z, 0);
+    return changeBlock(target.x, target.y, target.z, 0);
   }
 
   function placeBlock() {
     const target = raycast();
     if (!target) {
       message.textContent = "置きたい場所に近づいてね";
-      return;
+      return false;
     }
     const x = target.x + target.normal[0];
     const y = target.y + target.normal[1];
@@ -1019,9 +1071,53 @@
         && z >= player.z - PLAYER_RADIUS && z <= player.z + PLAYER_RADIUS
         && y < player.y + PLAYER_HEIGHT && y + 1 > player.y)) {
       message.textContent = "そこにはブロックを置けません";
-      return;
+      return false;
     }
-    changeBlock(x, y, z, selectedBlock);
+    return changeBlock(x, y, z, selectedBlock);
+  }
+
+  function performBlockAction(type) {
+    return type === "mine" ? mineBlock() : placeBlock();
+  }
+
+  function scheduleBlockAction(action, delay) {
+    action.timer = window.setTimeout(() => {
+      action.timer = null;
+      if (activeBlockAction !== action) return;
+      if (pendingEdits.size > 0) {
+        scheduleBlockAction(action, CONTINUOUS_EDIT_RETRY_MS);
+        return;
+      }
+      if (!performBlockAction(action.type)) {
+        stopBlockAction();
+        return;
+      }
+      scheduleBlockAction(action, CONTINUOUS_EDIT_INTERVAL_MS);
+    }, delay);
+  }
+
+  function startBlockAction(type, source, pointerId = null) {
+    if (activeBlockAction) return false;
+    const action = { type, source, pointerId, timer: null };
+    activeBlockAction = action;
+    if (pendingEdits.size > 0) {
+      scheduleBlockAction(action, CONTINUOUS_EDIT_RETRY_MS);
+      return true;
+    }
+    if (!performBlockAction(type)) {
+      stopBlockAction();
+      return false;
+    }
+    scheduleBlockAction(action, CONTINUOUS_EDIT_INTERVAL_MS);
+    return true;
+  }
+
+  function stopBlockAction(pointerId = null) {
+    if (!activeBlockAction) return;
+    if (pointerId !== null
+      && (activeBlockAction.source !== "touch" || activeBlockAction.pointerId !== pointerId)) return;
+    if (activeBlockAction.timer !== null) window.clearTimeout(activeBlockAction.timer);
+    activeBlockAction = null;
   }
 
   window.addEventListener("moneycraft:room-joined", receiveRoomJoined);
@@ -1035,6 +1131,7 @@
   window.addEventListener("moneycraft:world-snapshot", receiveWorldSnapshot);
   window.addEventListener("moneycraft:edit-rejected", receiveEditRejected);
   window.addEventListener("moneycraft:world-send-failed", () => {
+    stopBlockAction();
     clearPendingEdits();
     message.textContent = "共有ワールドの通信に失敗しました。再参加してください";
   });
@@ -1072,8 +1169,11 @@
   });
   canvas.addEventListener("mousedown", (event) => {
     if (document.pointerLockElement !== canvas) return;
-    if (event.button === 0) mineBlock();
-    if (event.button === 2) placeBlock();
+    if (event.button === 0) startBlockAction("mine", "mouse");
+    if (event.button === 2) startBlockAction("place", "mouse");
+  });
+  window.addEventListener("mouseup", () => {
+    if (activeBlockAction?.source === "mouse") stopBlockAction();
   });
   canvas.addEventListener("pointerdown", (event) => {
     if (event.pointerType !== "touch") return;
@@ -1176,6 +1276,7 @@
     virtualStick.style.setProperty("--stick-y", "0px");
   }
   function clearInput() {
+    stopBlockAction();
     keys.clear();
     touchPointers.clear();
     heldTouchActions.clear();
@@ -1189,6 +1290,12 @@
       event.preventDefault();
       event.stopPropagation();
       if (event.pointerType === "touch") enableTouchControls();
+      if (heldAction === "mine" || heldAction === "place") {
+        if (startBlockAction(heldAction, "touch", event.pointerId)) {
+          if (Number.isFinite(event.pointerId)) button.setPointerCapture(event.pointerId);
+        }
+        return;
+      }
       if (heldAction) {
         if ([...heldTouchActions.values()].includes(heldAction)) return;
         heldTouchActions.set(event.pointerId, heldAction);
@@ -1198,10 +1305,11 @@
     });
     for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
       button.addEventListener(type, (event) => heldTouchActions.delete(event.pointerId));
+      button.addEventListener(type, (event) => stopBlockAction(event.pointerId));
     }
   }
-  bindTouchAction(touchMine, mineBlock);
-  bindTouchAction(touchPlace, placeBlock);
+  bindTouchAction(touchMine, mineBlock, "mine");
+  bindTouchAction(touchPlace, placeBlock, "place");
   bindTouchAction(touchJump, jump, "up");
   bindTouchAction(touchDescend, () => {}, "down");
   document.addEventListener("pointerlockchange", () => {

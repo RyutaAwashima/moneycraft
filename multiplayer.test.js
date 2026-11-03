@@ -18,9 +18,11 @@ function createClient({
     textContent = "";
     dataset = {};
     children = [];
+    attributes = {};
     append(...children) { this.children.push(...children); }
     replaceChildren(...children) { this.children = children; }
     focus() {}
+    setAttribute(name, value) { this.attributes[name] = value; }
     removeAttribute(name) { delete this[name]; }
   }
   class Socket extends EventTarget {
@@ -106,6 +108,30 @@ test("browser protocol and JSON failures close using permitted application codes
   }
 });
 
+test("workspace tabs keep building clean by default and support keyboard navigation", () => {
+  const client = createClient({ autoJoin: false });
+  const buildTab = client.elements.get("#build-tab");
+  const roomTab = client.elements.get("#room-tab");
+  const buildView = client.elements.get("#build-view");
+  const roomView = client.elements.get("#room-view");
+
+  assert.equal(buildTab.attributes["aria-selected"], "true");
+  assert.equal(buildView.hidden, false);
+  assert.equal(roomView.hidden, true);
+
+  roomTab.dispatchEvent(new Event("click"));
+  assert.equal(roomTab.attributes["aria-selected"], "true");
+  assert.equal(buildView.hidden, true);
+  assert.equal(roomView.hidden, false);
+
+  const keydown = new Event("keydown", { cancelable: true });
+  keydown.key = "ArrowLeft";
+  roomTab.dispatchEvent(keydown);
+  assert.equal(buildTab.attributes["aria-selected"], "true");
+  assert.equal(buildTab.tabIndex, 0);
+  assert.equal(roomTab.tabIndex, -1);
+});
+
 test("world timeout closes the socket and emits room-left for solo restoration", () => {
   const client = createClient();
   client.welcome();
@@ -153,6 +179,7 @@ test("opening a QR invitation prefills a validated code without connecting or ch
     ownerSession: { roomCode: "ABCD23", ownerToken: "owner-secret" },
   });
   assert.equal(client.elements.get("#room-code").value, "EFGH45");
+  assert.equal(client.elements.get("#room-view").hidden, false);
   assert.equal(client.sockets.length, 0);
   assert.match(client.elements.get("#room-status").textContent, /EFGH45/);
   client.elements.get("#join-room").dispatchEvent(new Event("click"));

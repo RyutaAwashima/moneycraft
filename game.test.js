@@ -11,11 +11,14 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
   const uploads = [];
   const errors = [];
   const context2d = { fillRect() {}, drawImage() {} };
+  const drawCalls = [];
   const gl = new Proxy({
     createShader: () => ({}), createProgram: () => ({}), createBuffer: () => ({}),
     createTexture: () => ({}), getShaderParameter: () => true, getProgramParameter: () => true,
     getAttribLocation: (_, name) => ["aPosition", "aColor", "aUv"].indexOf(name),
     bufferData: (_, data) => uploads.push(data.length),
+    drawArrays: (...args) => drawCalls.push(args),
+    LINES: 1,
   }, { get: (target, name) => target[name] ?? (() => {}) });
   class Element extends EventTarget {
     children = [];
@@ -70,7 +73,7 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
   let time = 0;
   const intervals = [];
   Object.assign(window, {
-    setTimeout: (callback) => { timers.set(++nextTimer, callback); return nextTimer; },
+    setTimeout: (callback, delay = 0) => { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
     clearTimeout: (id) => timers.delete(id),
     setInterval: (callback) => intervals.push(callback),
     requestAnimationFrame: (callback) => { frame = callback; },
@@ -112,11 +115,19 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
   const change = (revision, x, y, z, block = 7, expectedBlock = 0, requestId = `edit-${revision}`) => emit("block-changed", {
     revision, x, y, z, block, expectedBlock, requestId, playerId: "self",
   });
+  const runTimeout = (delay) => {
+    const timer = [...timers.entries()].find(([, value]) => value.delay === delay);
+    if (!timer) return false;
+    timers.delete(timer[0]);
+    timer[1].callback();
+    return true;
+  };
   let state;
   window.addEventListener("moneycraft:send-player-state", (event) => { state = event.detail; });
-  return { get model() { return model; }, worldApi, originalSave, elements, uploads, saved, emit, join, change, roomWorld, window, document, timers,
+  return { get model() { return model; }, worldApi, originalSave, elements, uploads, drawCalls, saved, emit, join, change, roomWorld, window, document, timers,
     frame: (count = 1) => { for (let i = 0; i < count; i += 1) { time += 1000 / 30; frame(time); } },
     advance: (ms) => { time += ms; },
+    runTimeout,
     state: () => { for (const callback of intervals) callback(); return state; },
     errors };
 }
@@ -142,6 +153,12 @@ function startFlying(game) {
 test("nine materials render previews and only edited chunks are uploaded", () => {
   const game = createGame();
   assert.equal(game.elements.get("#hotbar").children.length, 9);
+  assert.equal(game.elements.get("#selected-block-name").textContent, "草ブロック");
+  game.elements.get("#hotbar").children[6].dispatchEvent(new Event("click"));
+  assert.equal(game.elements.get("#selected-block-name").textContent, "レンガブロック");
+  assert.equal(game.elements.get("#hotbar").children[6].attributes.get("aria-pressed"), "true");
+  input(game.window, "keydown", { code: "Digit9" });
+  assert.equal(game.elements.get("#selected-block-name").textContent, "窓ブロック");
   game.join();
   game.uploads.length = 0;
   game.change(1, 22, 1, 20);
@@ -152,6 +169,24 @@ test("nine materials render previews and only edited chunks are uploaded", () =>
   assert.equal(game.uploads.length, 12);
   game.frame();
   assert.deepEqual(game.errors, []);
+});
+
+test("the block under the crosshair receives a visible outline", () => {
+  const game = createGame();
+  game.roomWorld.blocks.fill(0);
+  for (let index = 0; index < game.roomWorld.width * game.roomWorld.depth; index += 1) {
+    game.roomWorld.blocks[index] = 3;
+  }
+  const spawn = game.worldApi.createModel({ width: 40, depth: 40, height: 20 }).spawnCenter;
+  const x = Math.floor(spawn.x);
+  const z = Math.floor(spawn.z) - 4;
+  game.roomWorld.blocks[(1 * game.roomWorld.depth + z) * game.roomWorld.width + x] = 7;
+  game.join();
+  game.drawCalls.length = 0;
+
+  game.frame();
+
+  assert.ok(game.drawCalls.some(([mode, first, count]) => mode === 1 && first === 0 && count === 24));
 });
 
 test("new solo worlds have a clear plains spawn and legacy saves remain intact", () => {
@@ -235,7 +270,8 @@ test("mining waits for server confirmation and rejected edits do not mutate bloc
   const move = new Event("mousemove");
   Object.assign(move, { movementX: 0, movementY: 300 });
   game.window.dispatchEvent(move);
-  game.elements.get("#touch-mine").dispatchEvent(new Event("pointerdown", { cancelable: true }));
+  input(game.elements.get("#touch-mine"), "pointerdown", { pointerId: 1, pointerType: "touch" });
+  input(game.elements.get("#touch-mine"), "pointerup", { pointerId: 1 });
   assert.ok(edit);
   assert.equal(edit.block, 0);
   assert.equal(edit.expectedBlock, 3);
@@ -243,11 +279,56 @@ test("mining waits for server confirmation and rejected edits do not mutate bloc
   game.emit("edit-rejected", { requestId: edit.requestId, code: "out_of_reach" });
   assert.equal(game.model.getBlock(edit.x, edit.y, edit.z), 3);
   assert.equal(game.timers.size, 0);
-  game.elements.get("#touch-mine").dispatchEvent(new Event("pointerdown", { cancelable: true }));
+  input(game.elements.get("#touch-mine"), "pointerdown", { pointerId: 2, pointerType: "touch" });
+  input(game.elements.get("#touch-mine"), "pointerup", { pointerId: 2 });
   game.change(1, edit.x, edit.y, edit.z, 0, 3, edit.requestId);
   assert.equal(game.model.getBlock(edit.x, edit.y, edit.z), 0);
   assert.equal(game.timers.size, 0);
   game.emit("room-left", {});
+});
+
+test("held mining repeats below the server edit limit and stops on release or rejection", () => {
+  const game = createGame();
+  game.join();
+  const edits = [];
+  game.window.addEventListener("moneycraft:send-block-edit", (event) => edits.push(event.detail));
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.window, "mousemove", { movementX: 0, movementY: 300 });
+  input(game.elements.get("#game"), "mousedown", { button: 0 });
+  assert.equal(edits.length, 1);
+
+  assert.equal(game.runTimeout(200), true);
+  assert.equal(edits.length, 1);
+  const first = edits[0];
+  game.change(1, first.x, first.y, first.z, 0, first.expectedBlock, first.requestId);
+  assert.equal(game.runTimeout(50), true);
+  assert.equal(edits.length, 2);
+
+  const second = edits[1];
+  game.emit("edit-rejected", { requestId: second.requestId, code: "rate_limited" });
+  assert.equal(game.runTimeout(200), false);
+  input(game.window, "mouseup");
+  game.emit("room-left", {});
+});
+
+test("held touch mining stops on pointer cancellation and room disconnect", () => {
+  const game = createGame();
+  game.join();
+  let edits = 0;
+  game.window.addEventListener("moneycraft:send-block-edit", () => { edits += 1; });
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.window, "mousemove", { movementX: 0, movementY: 300 });
+  const button = game.elements.get("#touch-mine");
+  input(button, "pointerdown", { pointerId: 7, pointerType: "touch" });
+  assert.equal(edits, 1);
+  input(button, "pointercancel", { pointerId: 7 });
+  assert.equal(game.runTimeout(200), false);
+  assert.equal(game.timers.size, 1);
+
+  input(button, "pointerdown", { pointerId: 8, pointerType: "touch" });
+  assert.equal(edits, 1);
+  game.emit("room-left", {});
+  assert.equal(game.runTimeout(200), false);
 });
 
 test("invalid snapshots preserve the current world and surface a protocol error", () => {

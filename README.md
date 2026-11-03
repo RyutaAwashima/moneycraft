@@ -20,6 +20,9 @@ the current implementation state, constraints, and next steps.
 Open `index.html` in a modern browser, or serve this folder with any static
 file server.
 
+Use the **建築** and **部屋管理** tabs to switch between the game and
+multiplayer room controls. Invitation links open the room-management tab.
+
 ## Controls
 
 - Click the game to capture the mouse; move the mouse to look around
@@ -29,7 +32,9 @@ file server.
   ceilings still block movement, and feet cannot rise above world height + 10.
 - Aim at a nearby block and left-click: mine it
 - Right-click an adjacent empty space: place the selected block
-- `1`–`9` or click a hotbar slot: select a block
+- Hold the left or right mouse button while the pointer is locked to repeat mining or placement; on touch devices, hold the on-screen mine or place button
+- A thin gold outline marks the block currently under the crosshair
+- `1`–`9` or click a hotbar slot: select a block; its name appears beside the hotbar
 - `I`: toggle the world-coordinate and movement indicator
 - `Esc`: release the mouse
 - On touch devices, drag the left half to move and the right half to look;

@@ -70,6 +70,44 @@ button {
   font-weight: 600;
 }
 
+.workspace-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 18px 0 14px;
+  padding: 4px;
+  border: 1px solid #dfe6dc;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.workspace-tab {
+  min-height: 38px;
+  flex: 1;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #718078;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace-tab[aria-selected="true"] {
+  background: #315f4b;
+  box-shadow: 0 2px 6px rgba(37, 76, 55, 0.16);
+  color: #fff;
+}
+
+.workspace-tab:focus-visible {
+  outline: 3px solid #b7d4b8;
+  outline-offset: 2px;
+}
+
+.workspace-view[hidden],
+#room-view[hidden] {
+  display: none;
+}
+
 .status-dot {
   width: 7px;
   height: 7px;
@@ -842,6 +880,18 @@ body.game-expanded {
   white-space: nowrap;
 }
 
+.selected-block-name {
+  min-width: 7em;
+  padding: 6px 9px;
+  border: 1px solid #dce8da;
+  border-radius: 7px;
+  background: #f4f8f2;
+  color: #315f4b;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .help-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -925,6 +975,10 @@ kbd {
 
   .topbar-note {
     font-size: 10px;
+  }
+
+  .workspace-tabs {
+    margin: 12px 0;
   }
 
   .intro {
@@ -1012,6 +1066,12 @@ kbd {
     max-width: 75px;
     white-space: normal;
     text-align: right;
+  }
+
+  .selected-block-name {
+    min-width: 0;
+    padding: 5px 7px;
+    font-size: 10px;
   }
 
   .canvas-hint {

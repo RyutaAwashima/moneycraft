@@ -24,13 +24,72 @@
         <div class="topbar-note"><span class="status-dot"></span> <span id="world-mode">ひとりで遊ぶワールド</span></div>
       </header>
 
+      <nav class="workspace-tabs" role="tablist" aria-label="画面の切り替え">
+        <button class="workspace-tab" id="build-tab" type="button" role="tab" aria-selected="true" aria-controls="build-view" tabindex="0">建築</button>
+        <button class="workspace-tab" id="room-tab" type="button" role="tab" aria-selected="false" aria-controls="room-view" tabindex="-1">部屋管理</button>
+      </nav>
+
+      <section class="workspace-view" id="build-view" role="tabpanel" aria-labelledby="build-tab">
       <section class="intro" aria-labelledby="game-title">
         <p class="eyebrow">BUILD A LITTLE WORLD</p>
         <h1 id="game-title">ブロックの世界へようこそ</h1>
         <p class="intro-copy">一人称の世界を歩き回って、ブロックで自由に建築しよう。</p>
       </section>
 
-      <section class="multiplayer-panel" aria-labelledby="multiplayer-title">
+      <section class="game-card" aria-label="ブロック建築ゲーム">
+        <div class="game-toolbar">
+          <div class="world-label">
+            <span class="sun-icon" aria-hidden="true">☀</span>
+            <span id="world-label">草原と森 · 64×64</span>
+          </div>
+          <div class="game-actions">
+            <button class="reset-button" id="fullscreen-game" type="button" aria-pressed="false">全画面</button>
+            <button class="reset-button" id="reset-world" type="button">ワールドをリセット</button>
+          </div>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="game" width="960" height="540" aria-label="一人称視点の3Dブロックワールド。WASDキーで移動し、マウスで視点を動かします。">
+            このゲームを遊ぶには、WebGLに対応したブラウザーが必要です。
+          </canvas>
+          <div class="remote-player-labels" id="remote-player-labels" aria-hidden="true"></div>
+          <div class="crosshair" aria-hidden="true"><span></span></div>
+          <output class="debug-indicator" id="debug-indicator" aria-live="polite" hidden></output>
+          <div class="canvas-hint" id="game-message" aria-live="polite">ゲーム画面をクリックしてスタート</div>
+          <output class="flight-status" id="flight-status" aria-live="polite" hidden>飛行中</output>
+          <div class="virtual-stick" id="virtual-stick" aria-hidden="true"><span></span></div>
+          <div class="touch-controls" aria-label="タッチ操作">
+            <button class="touch-button touch-mine" id="touch-mine" type="button" aria-label="ブロックを掘る">掘る</button>
+            <button class="touch-button touch-place" id="touch-place" type="button" aria-label="ブロックを置く">置く</button>
+            <button class="touch-button touch-jump" id="touch-jump" type="button" aria-label="ジャンプ">ジャンプ</button>
+            <button class="touch-button touch-descend" id="touch-descend" type="button" aria-label="下降" hidden>下降</button>
+          </div>
+        </div>
+        <div class="game-footer">
+          <div class="hotbar" id="hotbar" role="toolbar" aria-label="ブロック選択"></div>
+          <output class="selected-block-name" id="selected-block-name" aria-live="polite">草ブロック</output>
+          <span class="save-state" id="save-state">このブラウザーに自動保存</span>
+        </div>
+      </section>
+
+      <section class="help-grid" aria-label="操作方法">
+        <article class="help-item">
+          <span class="help-icon" aria-hidden="true">⌨</span>
+          <div><h2>歩く・飛ぶ</h2><p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> で移動。マウスで見回し、<kbd>Space</kbd> でジャンプ。素早く2回押すと飛行ON/OFF。飛行中は長押しで上昇、<kbd>Shift</kbd> で下降、離すと浮遊します。タッチ端末は左のパッドで移動、画面右のドラッグで見回し、ジャンプ・下降ボタンで上下移動。「全画面」でゲームだけを表示できます。</p></div>
+        </article>
+        <article class="help-item">
+          <span class="help-icon pickaxe" aria-hidden="true">⛏</span>
+          <div><h2>掘る・置く</h2><p>照準をブロックに合わせて左クリックで掘る。右クリックでブロックを置く。タッチ端末は画面の「掘る」「置く」ボタンを使います。</p></div>
+        </article>
+        <article class="help-item">
+          <span class="help-icon" aria-hidden="true">▦</span>
+          <div><h2>ブロックを選ぶ</h2><p>下のスロットをクリック、または <kbd>1</kbd>〜<kbd>9</kbd> キー。板材・レンガ・白い壁・窓も選べます。窓は不透明のガラス風ブロックです。<kbd>I</kbd> で座標表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
+        </article>
+      </section>
+      <p class="local-note">ひとり用ワールドはこのブラウザーに自動保存。共同建築は部屋コードで再参加すると続けられます。部屋を閉じると共有ワールドは削除されます。</p>
+      <p class="local-note">新しいワールドは64×64。平らな草原が約6割、森が約4割です。既存のワールドは地形・広さ・建築をそのまま維持します。</p>
+      </section>
+
+      <section class="multiplayer-panel" id="room-view" role="tabpanel" aria-labelledby="room-tab" hidden>
         <div class="multiplayer-heading">
           <div>
             <p class="eyebrow">PLAY TOGETHER</p>
@@ -103,56 +162,6 @@
         </div>
       </section>
 
-      <section class="game-card" aria-label="ブロック建築ゲーム">
-        <div class="game-toolbar">
-          <div class="world-label">
-            <span class="sun-icon" aria-hidden="true">☀</span>
-            <span id="world-label">草原と森 · 64×64</span>
-          </div>
-          <div class="game-actions">
-            <button class="reset-button" id="fullscreen-game" type="button" aria-pressed="false">全画面</button>
-            <button class="reset-button" id="reset-world" type="button">ワールドをリセット</button>
-          </div>
-        </div>
-        <div class="canvas-wrap">
-          <canvas id="game" width="960" height="540" aria-label="一人称視点の3Dブロックワールド。WASDキーで移動し、マウスで視点を動かします。">
-            このゲームを遊ぶには、WebGLに対応したブラウザーが必要です。
-          </canvas>
-          <div class="remote-player-labels" id="remote-player-labels" aria-hidden="true"></div>
-          <div class="crosshair" aria-hidden="true"><span></span></div>
-          <output class="debug-indicator" id="debug-indicator" aria-live="polite" hidden></output>
-          <div class="canvas-hint" id="game-message" aria-live="polite">ゲーム画面をクリックしてスタート</div>
-          <output class="flight-status" id="flight-status" aria-live="polite" hidden>飛行中</output>
-          <div class="virtual-stick" id="virtual-stick" aria-hidden="true"><span></span></div>
-          <div class="touch-controls" aria-label="タッチ操作">
-            <button class="touch-button touch-mine" id="touch-mine" type="button" aria-label="ブロックを掘る">掘る</button>
-            <button class="touch-button touch-place" id="touch-place" type="button" aria-label="ブロックを置く">置く</button>
-            <button class="touch-button touch-jump" id="touch-jump" type="button" aria-label="ジャンプ">ジャンプ</button>
-            <button class="touch-button touch-descend" id="touch-descend" type="button" aria-label="下降" hidden>下降</button>
-          </div>
-        </div>
-        <div class="game-footer">
-          <div class="hotbar" id="hotbar" role="toolbar" aria-label="ブロック選択"></div>
-          <span class="save-state" id="save-state">このブラウザーに自動保存</span>
-        </div>
-      </section>
-
-      <section class="help-grid" aria-label="操作方法">
-        <article class="help-item">
-          <span class="help-icon" aria-hidden="true">⌨</span>
-          <div><h2>歩く・飛ぶ</h2><p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> で移動。マウスで見回し、<kbd>Space</kbd> でジャンプ。素早く2回押すと飛行ON/OFF。飛行中は長押しで上昇、<kbd>Shift</kbd> で下降、離すと浮遊します。タッチ端末は左のパッドで移動、画面右のドラッグで見回し、ジャンプ・下降ボタンで上下移動。「全画面」でゲームだけを表示できます。</p></div>
-        </article>
-        <article class="help-item">
-          <span class="help-icon pickaxe" aria-hidden="true">⛏</span>
-          <div><h2>掘る・置く</h2><p>照準をブロックに合わせて左クリックで掘る。右クリックでブロックを置く。タッチ端末は画面の「掘る」「置く」ボタンを使います。</p></div>
-        </article>
-        <article class="help-item">
-          <span class="help-icon" aria-hidden="true">▦</span>
-          <div><h2>ブロックを選ぶ</h2><p>下のスロットをクリック、または <kbd>1</kbd>〜<kbd>9</kbd> キー。板材・レンガ・白い壁・窓も選べます。窓は不透明のガラス風ブロックです。<kbd>I</kbd> で座標表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
-        </article>
-      </section>
-      <p class="local-note">ひとり用ワールドはこのブラウザーに自動保存。共同建築は部屋コードで再参加すると続けられます。部屋を閉じると共有ワールドは削除されます。</p>
-      <p class="local-note">新しいワールドは64×64。平らな草原が約6割、森が約4割です。既存のワールドは地形・広さ・建築をそのまま維持します。</p>
       <footer class="site-footer">小さなブロックから、自分だけの世界をつくろう。</footer>
     </main>
   </body>
