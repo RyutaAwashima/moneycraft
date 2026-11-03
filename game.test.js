@@ -7,17 +7,34 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { webcrypto } = require("node:crypto");
 
-function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, height: 20 }, fullscreen = "unsupported" } = {}) {
+function createGame({
+  legacySave = false, roomOptions = { width: 40, depth: 40, height: 20 },
+  fullscreen = "unsupported", audioAvailable = true, audioSettings = null,
+  recordUvs = false,
+} = {}) {
   const uploads = [];
   const errors = [];
-  const context2d = { fillRect() {}, drawImage() {} };
+  const soundEvents = [];
+  const texturePixels = [];
+  const previews = [];
+  const textureUploads = [];
+  const uvUploads = [];
+  const context2d = {
+    fillRect: (x, y) => texturePixels.push({ x, y, color: context2d.fillStyle }),
+    drawImage: (...args) => previews.push(args),
+  };
   const drawCalls = [];
   const gl = new Proxy({
     createShader: () => ({}), createProgram: () => ({}), createBuffer: () => ({}),
     createTexture: () => ({}), getShaderParameter: () => true, getProgramParameter: () => true,
     getAttribLocation: (_, name) => ["aPosition", "aColor", "aUv"].indexOf(name),
-    bufferData: (_, data) => uploads.push(data.length),
+    bufferData: (_, data) => {
+      uploads.push(data.length);
+      if (recordUvs && uploads.length % 3 === 0) uvUploads.push(data);
+    },
+    texImage2D: (...args) => textureUploads.push(args.at(-1)),
     drawArrays: (...args) => drawCalls.push(args),
+    TRIANGLES: 4,
     LINES: 1,
   }, { get: (target, name) => target[name] ?? (() => {}) });
   class Element extends EventTarget {
@@ -53,6 +70,7 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
     if (!elements.has(selector)) elements.set(selector, new Element());
     return elements.get(selector);
   };
+  document.querySelector("#debug-indicator").hidden = true;
   document.createElement = () => new Element();
   document.body = new Element();
   if (fullscreen !== "unsupported") {
@@ -80,9 +98,37 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
     confirm: () => true,
   });
   const saved = new Map();
+  if (audioSettings) saved.set("moneycraft-audio-settings-v1", JSON.stringify(audioSettings));
+  class AudioContextMock {
+    state = "suspended";
+    currentTime = 0;
+    destination = {};
+    createOscillator() {
+      return {
+        frequency: {
+          setValueAtTime: (value) => soundEvents.push(["frequency", value]),
+          exponentialRampToValueAtTime: (value) => soundEvents.push(["frequency-ramp", value]),
+        },
+        connect() {},
+        start: () => soundEvents.push(["start"]),
+        stop: () => soundEvents.push(["stop"]),
+      };
+    }
+    createGain() {
+      return {
+        gain: {
+          setValueAtTime: (value) => soundEvents.push(["gain", value]),
+          exponentialRampToValueAtTime: (value) => soundEvents.push(["gain-ramp", value]),
+        },
+        connect() {},
+      };
+    }
+    resume() { soundEvents.push(["resume"]); this.state = "running"; return Promise.resolve(); }
+  }
   const context = {
     window, document, CustomEvent, Event, HTMLInputElement: class {}, HTMLTextAreaElement: class {},
     crypto: webcrypto, performance: { now: () => time }, console: { error: (...args) => errors.push(args), warn() {} },
+    AudioContext: audioAvailable ? AudioContextMock : undefined,
     localStorage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
   };
   context.globalThis = context;
@@ -124,7 +170,8 @@ function createGame({ legacySave = false, roomOptions = { width: 40, depth: 40, 
   };
   let state;
   window.addEventListener("moneycraft:send-player-state", (event) => { state = event.detail; });
-  return { get model() { return model; }, worldApi, originalSave, elements, uploads, drawCalls, saved, emit, join, change, roomWorld, window, document, timers,
+  return { get model() { return model; }, worldApi, originalSave, elements, uploads, drawCalls, saved, soundEvents,
+    texturePixels, previews, textureUploads, uvUploads, emit, join, change, roomWorld, window, document, timers,
     frame: (count = 1) => { for (let i = 0; i < count; i += 1) { time += 1000 / 30; frame(time); } },
     advance: (ms) => { time += ms; },
     runTimeout,
@@ -150,9 +197,9 @@ function startFlying(game) {
   assert.equal(game.elements.get("#flight-status").hidden, false);
 }
 
-test("nine materials render previews and only edited chunks are uploaded", () => {
+test("fifteen materials render previews and only edited chunks are uploaded", () => {
   const game = createGame();
-  assert.equal(game.elements.get("#hotbar").children.length, 9);
+  assert.equal(game.elements.get("#hotbar").children.length, 15);
   assert.equal(game.elements.get("#selected-block-name").textContent, "草ブロック");
   game.elements.get("#hotbar").children[6].dispatchEvent(new Event("click"));
   assert.equal(game.elements.get("#selected-block-name").textContent, "レンガブロック");
@@ -169,6 +216,187 @@ test("nine materials render previews and only edited chunks are uploaded", () =>
   assert.equal(game.uploads.length, 12);
   game.frame();
   assert.deepEqual(game.errors, []);
+});
+
+test("colored walls have textured previews, correct atlas UVs and no fictitious number shortcuts", () => {
+  const game = createGame({ recordUvs: true });
+  const atlas = game.textureUploads[0];
+  assert.equal(atlas.width, 512);
+  assert.equal(atlas.height, 16);
+  assert.equal(game.texturePixels.length, 17 * 16 * 16);
+  assert.equal(game.previews.length, 15);
+  for (let tile = 0; tile < 15; tile += 1) {
+    assert.equal(game.previews[tile][0], atlas);
+    assert.equal(game.previews[tile][1], tile * 16);
+  }
+  const names = ["赤い壁ブロック", "青い壁ブロック", "黄色い壁ブロック",
+    "緑の壁ブロック", "紫の壁ブロック", "黒い壁ブロック"];
+  game.join();
+  for (let index = 0; index < names.length; index += 1) {
+    const id = 10 + index;
+    const button = game.elements.get("#hotbar").children[id - 1];
+    input(button, "click");
+    assert.equal(button.attributes.get("aria-label"), names[index]);
+    assert.equal(button.children[0].textContent, "");
+    assert.equal(game.elements.get("#selected-block-name").textContent, names[index]);
+    assert.equal(button.attributes.get("aria-pressed"), "true");
+    game.uvUploads.length = 0;
+    game.change(index * 2 + 1, 22, 12, 23, id);
+    assert.equal(game.model.getBlock(22, 12, 23), id);
+    const uvs = game.uvUploads.flatMap((data) => Array.from(data));
+    assert.equal(uvs.length, 6 * 6 * 2);
+    for (let offset = 0; offset < uvs.length; offset += 2) {
+      assert.ok(uvs[offset] >= ((id - 1) * 16 + 0.5) / atlas.width);
+      assert.ok(uvs[offset] <= ((id - 1) * 16 + 15.5) / atlas.width);
+      assert.ok(uvs[offset + 1] > 0 && uvs[offset + 1] < 1);
+    }
+    game.change(index * 2 + 2, 22, 12, 23, 0, id);
+  }
+  assert.equal(new Set(game.texturePixels.filter(({ x, y }) =>
+    x >= 9 * 16 && x % 16 === 0 && y === 0).map(({ color }) => color)).size, 8);
+  input(game.window, "keydown", { code: "Digit1" });
+  assert.equal(game.elements.get("#selected-block-name").textContent, "草ブロック");
+});
+
+test("colored walls can be placed through touch controls in solo saves and shared edits", () => {
+  for (const shared of [false, true]) {
+    for (let id = 10; id <= 15; id += 1) {
+      const game = createGame();
+      if (shared) game.join();
+      input(game.elements.get("#hotbar").children[id - 1], "click");
+      game.document.pointerLockElement = game.elements.get("#game");
+      input(game.window, "mousemove", { movementX: 0, movementY: 300 });
+      let edit;
+      game.window.addEventListener("moneycraft:send-block-edit", (event) => { edit = event.detail; });
+      input(game.elements.get("#touch-place"), "pointerdown", { pointerId: 1, pointerType: "touch" });
+      input(game.elements.get("#touch-place"), "pointerup", { pointerId: 1 });
+      if (shared) {
+        assert.ok(edit);
+        assert.equal(edit.block, id);
+        assert.equal(game.model.getBlock(edit.x, edit.y, edit.z), 0);
+        game.change(1, edit.x, edit.y, edit.z, id, 0, edit.requestId);
+        assert.equal(game.model.getBlock(edit.x, edit.y, edit.z), id);
+      } else {
+        const saved = JSON.parse(game.saved.get("moneycraft-3d-world-v2"));
+        assert.equal(saved.world.blocks.filter((block) => block === id).length, 1);
+        const restored = game.worldApi.createModel(saved.world);
+        assert.equal(restored.load(saved.world), true);
+        assert.deepEqual(Array.from(restored.serialize().blocks), saved.world.blocks);
+      }
+      assert.deepEqual(game.errors, []);
+    }
+  }
+});
+
+test("I displays frame pacing and rendering workload without changing world coordinates", () => {
+  const game = createGame();
+  const indicator = game.elements.get("#debug-indicator");
+  assert.equal(indicator.hidden, true);
+
+  input(game.window, "keydown", { code: "KeyI", repeat: false });
+  assert.equal(indicator.hidden, false);
+  game.frame(6);
+
+  assert.match(indicator.textContent, /Performance\s+30 FPS · frame p95 33\.3 ms/);
+  assert.match(indicator.textContent, /Render submit \d+\.\d ms · \d+ chunks · \d+ calls · [\d.]+k tris/);
+  assert.match(indicator.textContent, /World\s+X/);
+  assert.deepEqual(game.errors, []);
+});
+
+test("sound starts muted, saves volume and only plays after an accepted shared edit", async () => {
+  const game = createGame();
+  const toggle = game.elements.get("#sound-toggle");
+  const volume = game.elements.get("#sound-volume");
+  assert.equal(toggle.textContent, "音声：OFF");
+  assert.equal(toggle.attributes.get("aria-pressed"), "false");
+
+  volume.value = "0.7";
+  input(volume, "input");
+  assert.deepEqual(JSON.parse(game.saved.get("moneycraft-audio-settings-v1")), { muted: true, volume: 0.7 });
+  toggle.dispatchEvent(new Event("click"));
+  await new Promise(setImmediate);
+  assert.equal(toggle.textContent, "音声：ON");
+  assert.equal(JSON.parse(game.saved.get("moneycraft-audio-settings-v1")).muted, false);
+
+  game.join();
+  const edits = [];
+  game.window.addEventListener("moneycraft:send-block-edit", (event) => edits.push(event.detail));
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.window, "mousemove", { movementX: 0, movementY: 300 });
+  input(game.elements.get("#touch-mine"), "pointerdown", { pointerId: 20, pointerType: "touch" });
+  input(game.elements.get("#touch-mine"), "pointerup", { pointerId: 20 });
+  assert.equal(edits.length, 1);
+  assert.equal(game.soundEvents.some(([type]) => type === "start"), false);
+
+  const edit = edits[0];
+  game.emit("block-changed", {
+    ...edit, revision: 1, block: 0, expectedBlock: edit.expectedBlock, playerId: "self",
+  });
+  assert.ok(game.soundEvents.some(([type]) => type === "start"));
+  assert.ok(game.soundEvents.some(([type, value]) => type === "gain" && value > 0));
+  game.emit("room-left", {});
+});
+
+test("saved enabled sound initializes on a shared edit and only plays after confirmation", async () => {
+  const game = createGame({ audioSettings: { muted: false, volume: 0.4 } });
+  assert.equal(game.elements.get("#sound-toggle").textContent, "音声：ON");
+  assert.equal(game.elements.get("#sound-volume").value, "0.4");
+  game.join();
+  const edits = [];
+  game.window.addEventListener("moneycraft:send-block-edit", (event) => edits.push(event.detail));
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.window, "mousemove", { movementX: 0, movementY: 300 });
+  input(game.elements.get("#touch-mine"), "pointerdown", { pointerId: 22, pointerType: "touch" });
+  input(game.elements.get("#touch-mine"), "pointerup", { pointerId: 22 });
+  await new Promise(setImmediate);
+  assert.equal(edits.length, 1);
+  assert.ok(game.soundEvents.some(([type]) => type === "resume"));
+  assert.equal(game.soundEvents.some(([type]) => type === "start"), false);
+  game.emit("block-changed", {
+    ...edits[0], revision: 1, block: 0, playerId: "self",
+  });
+  assert.ok(game.soundEvents.some(([type]) => type === "start"));
+  game.emit("room-left", {});
+});
+
+test("rejected edits stay silent and browsers without Web Audio remain muted", async () => {
+  const game = createGame({ audioAvailable: false });
+  game.elements.get("#sound-toggle").dispatchEvent(new Event("click"));
+  await new Promise(setImmediate);
+  assert.equal(game.elements.get("#sound-toggle").attributes.get("aria-pressed"), "false");
+  assert.match(game.elements.get("#sound-status").textContent, /利用できません/);
+
+  const supported = createGame();
+  supported.elements.get("#sound-toggle").dispatchEvent(new Event("click"));
+  await new Promise(setImmediate);
+  supported.join();
+  const edits = [];
+  supported.window.addEventListener("moneycraft:send-block-edit", (event) => edits.push(event.detail));
+  supported.document.pointerLockElement = supported.elements.get("#game");
+  input(supported.window, "mousemove", { movementX: 0, movementY: 300 });
+  input(supported.elements.get("#touch-mine"), "pointerdown", { pointerId: 21, pointerType: "touch" });
+  input(supported.elements.get("#touch-mine"), "pointerup", { pointerId: 21 });
+  supported.emit("edit-rejected", { requestId: edits[0].requestId, code: "out_of_reach" });
+  assert.equal(supported.soundEvents.some(([type]) => type === "start"), false);
+  supported.emit("room-left", {});
+});
+
+test("ambient bird chirps stay muted by default and stop when audio is muted", async () => {
+  const game = createGame();
+  const toggle = game.elements.get("#sound-toggle");
+  assert.equal(toggle.textContent, "音声：OFF");
+  assert.equal(game.soundEvents.some(([type]) => type === "start"), false);
+
+  toggle.dispatchEvent(new Event("click"));
+  await new Promise(setImmediate);
+  assert.equal(game.soundEvents.some(([type]) => type === "start"), false);
+  assert.equal(game.runTimeout(15000), true);
+  assert.ok(game.soundEvents.some(([type]) => type === "start"));
+  assert.ok(game.soundEvents.some(([type, value]) => type === "gain" && value > 0 && value <= 0.0063));
+
+  toggle.dispatchEvent(new Event("click"));
+  assert.equal(toggle.textContent, "音声：OFF");
+  assert.equal(game.runTimeout(15000), false);
 });
 
 test("the block under the crosshair receives a visible outline", () => {
@@ -491,7 +719,7 @@ test("fullscreen supports native exit and page-filling fallback without hiding t
     await Promise.resolve();
     assert.equal(button.attributes.get("aria-pressed"), "true");
     assert.equal(card.classList.contains("is-expanded"), true);
-    assert.equal(game.elements.get("#hotbar").children.length, 9);
+    assert.equal(game.elements.get("#hotbar").children.length, 15);
     if (fullscreen === "native") await game.document.exitFullscreen();
     else input(game.window, "keydown", { code: "Escape" });
     assert.equal(button.attributes.get("aria-pressed"), "false");

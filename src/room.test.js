@@ -112,10 +112,58 @@ test("simultaneous edits are serialized and only one empty-cell placement wins",
   assert.equal(two.messages.at(-1).payload.code, "edit_conflict");
 });
 
+test("all colored walls synchronize, persist, rejoin and survive backup restoration", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  for (let block = 10; block <= 15; block += 1) {
+    await send(room, one, "block-edit", {
+      ...placement, requestId: `color-${block}`, block, z: block,
+    });
+    assert.equal(one.messages.at(-1).type, "block-changed");
+    assert.equal(one.messages.at(-1).payload.block, block);
+    assert.deepEqual(one.messages.at(-1), two.messages.at(-1));
+  }
+  const persisted = await room.getWorldSnapshot(123);
+  assert.equal(persisted.revision, 6);
+  const restarted = new Room(ctx);
+  await send(restarted, two, "world-request", null);
+  assert.deepEqual(two.messages.at(-1).payload, persisted);
+  const headers = { "Content-Type": "application/json", "X-Room-Owner-Token": "a".repeat(32) };
+  const backupResponse = await restarted.fetch(new Request("https://room.internal/internal/backups", {
+    method: "POST", headers, body: JSON.stringify({ name: "colored-walls" }),
+  }));
+  assert.equal(backupResponse.status, 201);
+  const { backup } = await backupResponse.json();
+  await send(restarted, one, "block-edit", {
+    ...placement, requestId: "mine-color", block: 0, expectedBlock: 10,
+  });
+  assert.equal(one.messages.at(-1).type, "block-changed");
+  const restored = await restarted.fetch(new Request("https://room.internal/internal/backups/restore", {
+    method: "POST", headers, body: JSON.stringify({ backupId: backup.id }),
+  }));
+  assert.equal(restored.status, 200);
+  const snapshot = await restarted.getWorldSnapshot(123);
+  assert.deepEqual(snapshot.world, persisted.world);
+  assert.equal(two.messages.findLast(({ type }) => type === "world-snapshot").payload.world.blocks
+    .every((block, index) => block === persisted.world.blocks[index]), true);
+});
+
+test("old protocol edits cannot introduce materials into an incompatible client session", async () => {
+  const { ctx, room } = await setupRoom();
+  const socket = addPlayer(ctx);
+  await room.webSocketMessage(socket, JSON.stringify({
+    v: 3, type: "block-edit", payload: { ...placement, block: 10 },
+  }));
+  assert.equal(socket.messages.at(-1).v, 4);
+  assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
+  assert.equal((await ctx.storage.get("world")).revision, 0);
+});
+
 test("invalid, distant and player-overlapping edits cannot mutate the world", async () => {
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);
-  await send(room, socket, "block-edit", { ...placement, block: 10 });
+  await send(room, socket, "block-edit", { ...placement, block: 16 });
   assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
   await send(room, socket, "block-edit", { ...placement, x: 30 });
   assert.equal(socket.messages.at(-1).payload.code, "out_of_reach");

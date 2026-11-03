@@ -34,8 +34,11 @@ multiplayer room controls. Invitation links open the room-management tab.
 - Right-click an adjacent empty space: place the selected block
 - Hold the left or right mouse button while the pointer is locked to repeat mining or placement; on touch devices, hold the on-screen mine or place button
 - A thin gold outline marks the block currently under the crosshair
-- `1`–`9` or click a hotbar slot: select a block; its name appears beside the hotbar
-- `I`: toggle the world-coordinate and movement indicator
+- Click or tap a hotbar slot to select a block; its name appears beside the hotbar.
+  Scroll the single-row hotbar horizontally for more materials. `1`–`9` select
+  the original nine materials; colored walls are selected by clicking or tapping.
+- Block mining, placement, and ambient bird sounds are muted by default. Use the sound toggle and volume slider in the game toolbar to opt in; settings are saved in this browser.
+- `I`: toggle the world-coordinate and movement indicator, including FPS, frame-time p95, render submission time, chunk count, draw calls, and triangles. These diagnostics stay in this browser and are not uploaded. Render submission time measures JavaScript/WebGL command submission, not GPU execution.
 - `Esc`: release the mouse
 - On touch devices, drag the left half to move and the right half to look;
   a virtual pad stays visible while idle. Use the on-screen buttons to mine,
@@ -45,10 +48,11 @@ multiplayer room controls. Invitation links open the room-management tab.
   Exit with the same button or `Esc`. Browsers without element fullscreen
   support use a page-filling layout instead (browser chrome may remain).
 
-All nine blocks have small procedural pixel textures. Planks, bricks, a white
+All fifteen blocks have small procedural pixel textures. Planks, bricks, a white
 wall, and an opaque glass-style window are available alongside the original
-five materials. Window blocks are solid, not transparent. Stairs are not yet
-implemented.
+five materials. Six solid colored walls (red, blue, yellow, green, purple, and
+black) provide decoration without changing cube collision or adding transparent
+rendering. Window blocks are solid, not transparent. Stairs are not yet implemented.
 
 Solo worlds are saved in the current browser using local storage. Joining a
 room temporarily switches to its shared world without overwriting the solo
@@ -194,13 +198,13 @@ Production checks verified the flat/tree-free grassland, editing at the new
 edge, late-join restoration, and preservation of an existing local 40-square
 save when entering and leaving a new 64-square room.
 
-This implementation requires both the updated Worker
-and client. Deploy the Worker first (`wrangler deploy`), publish the updated
-static client, then reload all participating browsers. A v1/v2 client cannot
-exchange gameplay messages with a v3 Worker, but a v3 client can still join
-existing 40-square rooms. No new dependencies, bindings,
-or configuration changes are required. Reload existing browser tabs to receive
-the updated client.
+The colored-wall implementation is **local and unpublished**, and uses protocol
+**v4** to prevent old clients from receiving block IDs they cannot render or load.
+Publish the updated Worker first (`wrangler deploy`), then the matching static
+client, and reload all participating browsers. Earlier protocol clients cannot
+exchange gameplay messages with a v4 Worker. Existing block IDs, world format,
+40-/64-square works, and backups remain compatible with the new implementation.
+No new dependencies, bindings, or configuration changes are required.
 
 ## Publish with GitHub Pages
 

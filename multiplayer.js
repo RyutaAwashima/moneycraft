@@ -55,7 +55,7 @@
   let currentWorkName = "新しい作品";
   let currentBackups = [];
   let activePlayerCount = 0;
-  const PROTOCOL_VERSION = 3;
+  const PROTOCOL_VERSION = 4;
   const players = new Map();
 
   function selectWorkspaceTab(tabName, focus = false) {

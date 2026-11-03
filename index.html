@@ -43,6 +43,12 @@
             <span id="world-label">草原と森 · 64×64</span>
           </div>
           <div class="game-actions">
+            <div class="sound-controls">
+              <button class="reset-button sound-toggle" id="sound-toggle" type="button" aria-pressed="false">音声：OFF</button>
+              <label for="sound-volume">音量</label>
+              <input id="sound-volume" type="range" min="0" max="1" step="0.05" value="0.35" aria-label="音量">
+              <span class="sound-status" id="sound-status" role="status" aria-live="polite"></span>
+            </div>
             <button class="reset-button" id="fullscreen-game" type="button" aria-pressed="false">全画面</button>
             <button class="reset-button" id="reset-world" type="button">ワールドをリセット</button>
           </div>
@@ -82,7 +88,7 @@
         </article>
         <article class="help-item">
           <span class="help-icon" aria-hidden="true">▦</span>
-          <div><h2>ブロックを選ぶ</h2><p>下のスロットをクリック、または <kbd>1</kbd>〜<kbd>9</kbd> キー。板材・レンガ・白い壁・窓も選べます。窓は不透明のガラス風ブロックです。<kbd>I</kbd> で座標表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
+          <div><h2>ブロックを選ぶ</h2><p>下のスロットをクリック／タッチして選択。建材欄は横スクロールできます。<kbd>1</kbd>〜<kbd>9</kbd> キーで基本の9種、横スクロールの先で赤・青・黄・緑・紫・黒の壁も選べます。窓は不透明のガラス風ブロックです。<kbd>I</kbd> で座標・性能表示、<kbd>Esc</kbd> でカーソルを戻す。</p></div>
         </article>
       </section>
       <p class="local-note">ひとり用ワールドはこのブラウザーに自動保存。共同建築は部屋コードで再参加すると続けられます。部屋を閉じると共有ワールドは削除されます。</p>

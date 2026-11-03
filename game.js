@@ -15,6 +15,9 @@
   const flightStatus = document.querySelector("#flight-status");
   const gameCard = document.querySelector(".game-card");
   const fullscreenButton = document.querySelector("#fullscreen-game");
+  const soundToggle = document.querySelector("#sound-toggle");
+  const soundVolume = document.querySelector("#sound-volume");
+  const soundStatus = document.querySelector("#sound-status");
   const saveState = document.querySelector("#save-state");
   const resetButton = document.querySelector("#reset-world");
   const remotePlayerLabels = document.querySelector("#remote-player-labels");
@@ -24,7 +27,197 @@
     return;
   }
 
+  function loadAudioSettings() {
+    try {
+      const saved = localStorage.getItem(AUDIO_SETTINGS_KEY);
+      if (!saved) {
+        updateAudioControls();
+        return;
+      }
+      const settings = JSON.parse(saved);
+      if (typeof settings.muted === "boolean") soundMuted = settings.muted;
+      if (Number.isFinite(settings.volume) && settings.volume >= 0 && settings.volume <= 1) {
+        soundVolumeLevel = settings.volume;
+      }
+    } catch (error) {
+      console.error("Sound settings could not be loaded from this browser.", error);
+      soundStatus.textContent = "音声設定を読み込めませんでした";
+    }
+    updateAudioControls();
+  }
+
+  function saveAudioSettings() {
+    try {
+      localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({
+        muted: soundMuted,
+        volume: soundVolumeLevel,
+      }));
+      soundStatus.textContent = "";
+    } catch (error) {
+      console.error("Sound settings could not be saved to this browser.", error);
+      soundStatus.textContent = "音声設定を保存できませんでした";
+    }
+  }
+
+  function updateAudioControls() {
+    soundToggle.textContent = `音声：${soundMuted ? "OFF" : "ON"}`;
+    soundToggle.setAttribute("aria-pressed", String(!soundMuted));
+    soundToggle.setAttribute("aria-label", soundMuted ? "音声を有効にする" : "音声をミュートする");
+    soundVolume.value = String(soundVolumeLevel);
+  }
+
+  function createAudioContext() {
+    const AudioContextConstructor = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!AudioContextConstructor) return false;
+    audioContext ||= new AudioContextConstructor();
+    return true;
+  }
+
+  function resumeAudioContext() {
+    if (!audioResumePromise && audioContext.state === "suspended") {
+      audioResumePromise = audioContext.resume().finally(() => {
+        audioResumePromise = null;
+      });
+    }
+    return audioResumePromise || Promise.resolve();
+  }
+
+  function prepareAudioForInteraction() {
+    if (soundMuted) return;
+    try {
+      if (!createAudioContext()) {
+        soundMuted = true;
+        soundStatus.textContent = "このブラウザーでは効果音を利用できません";
+        updateAudioControls();
+        saveAudioSettings();
+        return;
+      }
+      void resumeAudioContext().then(scheduleAmbientChirp).catch((error) => {
+        console.error("Sound could not be prepared after user interaction.", error);
+        soundStatus.textContent = "効果音を有効にできませんでした";
+      });
+    } catch (error) {
+      console.error("Sound could not be prepared after user interaction.", error);
+      soundStatus.textContent = "効果音を有効にできませんでした";
+    }
+  }
+
+  function stopAmbientChirp() {
+    if (ambientChirpTimer === null) return;
+    window.clearTimeout(ambientChirpTimer);
+    ambientChirpTimer = null;
+  }
+
+  function scheduleAmbientChirp() {
+    if (soundMuted || ambientChirpTimer !== null || document.hidden
+      || !audioContext || audioContext.state !== "running") return;
+    ambientChirpTimer = window.setTimeout(() => {
+      ambientChirpTimer = null;
+      if (soundMuted || document.hidden || audioContext?.state !== "running") return;
+      if (playAmbientChirp()) scheduleAmbientChirp();
+    }, AMBIENT_CHIRP_INTERVAL_MS);
+  }
+
+  function playAmbientChirp() {
+    try {
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(1650, now);
+      oscillator.frequency.exponentialRampToValueAtTime(2300, now + 0.08);
+      oscillator.frequency.setValueAtTime(2100, now + 0.11);
+      oscillator.frequency.exponentialRampToValueAtTime(1750, now + 0.21);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, soundVolumeLevel * 0.018), now + 0.02);
+      gain.gain.setValueAtTime(Math.max(0.0001, soundVolumeLevel * 0.018), now + 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.25);
+      return true;
+    } catch (error) {
+      console.error("Ambient sound could not be played.", error);
+      soundStatus.textContent = "環境音を再生できませんでした";
+      return false;
+    }
+  }
+
+  async function enableSound() {
+    try {
+      if (!createAudioContext()) {
+        soundStatus.textContent = "このブラウザーでは効果音を利用できません";
+        return;
+      }
+      await resumeAudioContext();
+      soundMuted = false;
+      soundStatus.textContent = "";
+      updateAudioControls();
+      saveAudioSettings();
+      scheduleAmbientChirp();
+    } catch (error) {
+      console.error("Sound could not be enabled in this browser.", error);
+      soundMuted = true;
+      soundStatus.textContent = "効果音を有効にできませんでした";
+      updateAudioControls();
+    }
+  }
+
+  function toggleSound() {
+    if (soundMuted) {
+      void enableSound();
+      return;
+    }
+    soundMuted = true;
+    stopAmbientChirp();
+    updateAudioControls();
+    saveAudioSettings();
+  }
+
+  function playBlockSound(block) {
+    if (soundMuted) return;
+    const play = () => {
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const mining = block === 0;
+      oscillator.type = mining ? "triangle" : "sine";
+      oscillator.frequency.setValueAtTime(mining ? 235 : 390, now);
+      oscillator.frequency.exponentialRampToValueAtTime(mining ? 105 : 520, now + 0.075);
+      gain.gain.setValueAtTime(Math.max(0.0001, soundVolumeLevel * 0.12), now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.085);
+    };
+    try {
+      if (!createAudioContext()) {
+        soundMuted = true;
+        updateAudioControls();
+        soundStatus.textContent = "このブラウザーでは効果音を利用できません";
+        saveAudioSettings();
+        return;
+      }
+      if (audioContext.state === "suspended" || audioResumePromise) {
+        void resumeAudioContext().then(play).catch((error) => {
+          console.error("Block sound could not be played.", error);
+          soundStatus.textContent = "効果音を再生できませんでした";
+        });
+        return;
+      }
+      play();
+    } catch (error) {
+      console.error("Block sound could not be played.", error);
+      soundStatus.textContent = "効果音を再生できませんでした";
+    }
+  }
+
   const SAVE_KEY = "moneycraft-3d-world-v2";
+  const AUDIO_SETTINGS_KEY = "moneycraft-audio-settings-v1";
+  const AMBIENT_CHIRP_INTERVAL_MS = 15000;
+  const FRAME_SAMPLE_CAPACITY = 120;
   const PLAYER_HEIGHT = 1.7;
   const PLAYER_RADIUS = 0.28;
   const PLAYER_STATE_INTERVAL_MS = 100;
@@ -43,8 +236,20 @@
   const touchMove = { x: 0, z: 0 };
   const heldTouchActions = new Map();
   let activeBlockAction = null;
+  let audioContext = null;
+  let audioResumePromise = null;
+  let ambientChirpTimer = null;
+  let soundMuted = true;
+  let soundVolumeLevel = 0.35;
   let lastJumpTime = -Infinity;
   let expanded = false;
+  const frameTimeSamples = new Float64Array(FRAME_SAMPLE_CAPACITY);
+  let frameTimeSampleCount = 0;
+  let nextFrameTimeSample = 0;
+  let renderDrawCalls = 0;
+  let renderTriangles = 0;
+  let renderChunkCount = 0;
+  let lastRenderDurationMs = 0;
   const faces = [
     { normal: [1, 0, 0], neighbor: [1, 0, 0], light: 0.82, corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
     { normal: [-1, 0, 0], neighbor: [-1, 0, 0], light: 0.72, corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]] },
@@ -236,6 +441,7 @@
       window.clearTimeout(pendingEdits.get(edit.requestId));
       pendingEdits.delete(edit.requestId);
       message.textContent = edit.block === 0 ? "ブロックを掘りました" : `${blocks[edit.block - 1].name}を置きました`;
+      playBlockSound(edit.block);
     }
     if (collidesAt(player.x, player.y, player.z)) moveToSafeSpawn();
     saveState.textContent = "共有ワールドをサーバーに保存";
@@ -267,6 +473,7 @@
       message.textContent = "共有ワールドの読み込み完了を待ってください";
       return false;
     }
+    prepareAudioForInteraction();
     if (roomMode === "shared") {
       const requestId = crypto.randomUUID();
       pendingEdits.set(requestId, window.setTimeout(() => {
@@ -281,6 +488,7 @@
     setBlock(x, y, z, block);
     updateWorldMesh(x, y, z);
     saveGame();
+    playBlockSound(block);
     message.textContent = block === 0 ? "ブロックを掘りました" : `${blocks[block - 1].name}を置きました`;
     return true;
   }
@@ -364,12 +572,12 @@
 
   function initializeTextures() {
     atlasCanvas = document.createElement("canvas");
-    atlasCanvas.width = 256;
+    atlasCanvas.width = 2 ** Math.ceil(Math.log2((blocks.length + 2) * 16));
     atlasCanvas.height = 16;
     const context = atlasCanvas.getContext("2d");
     if (!context) throw new Error("Could not create block texture canvas.");
-    for (let tile = 0; tile < 11; tile += 1) {
-      const id = tile < 9 ? tile + 1 : tile === 9 ? 2 : 4;
+    for (let tile = 0; tile < blocks.length + 2; tile += 1) {
+      const id = tile < blocks.length ? tile + 1 : tile === blocks.length ? 2 : 4;
       const base = blocks[id - 1].color.map((channel) => Math.round(channel * 255));
       for (let y = 0; y < 16; y += 1) {
         for (let x = 0; x < 16; x += 1) {
@@ -386,13 +594,13 @@
           if (id === 7 && (y % 4 === 0 || (x + (Math.floor(y / 4) % 2) * 4) % 8 === 0)) {
             color = [200, 185, 161];
           }
-          if (id === 8) color = base.map((channel) => channel + noise * 0.25);
+          if (id === 8 || id >= 10) color = base.map((channel) => channel + noise * 0.25);
           if (id === 9) {
             if (x === 0 || y === 0 || x === 15 || y === 15 || x === 7 || y === 7) color = [227, 223, 206];
             else if ((x + y) % 14 < 2) color = [194, 227, 236];
           }
-          if (tile === 9 && y < 3 + x % 2) color = blocks[0].color.map((channel) => channel * 255 + noise);
-          if (tile === 10) {
+          if (tile === blocks.length && y < 3 + x % 2) color = blocks[0].color.map((channel) => channel * 255 + noise);
+          if (tile === blocks.length + 1) {
             const ring = Math.floor(Math.hypot(x - 7.5, y - 7.5)) % 3 === 0 ? -28 : 12;
             color = base.map((channel) => channel + ring + noise * 0.3);
           }
@@ -518,15 +726,15 @@
           for (const face of faces) {
             if (getBlock(x + face.neighbor[0], y + face.neighbor[1], z + face.neighbor[2]) !== 0) continue;
             let tile = block - 1;
-            if (block === 1) tile = face.normal[1] === 1 ? 0 : face.normal[1] === -1 ? 1 : 9;
-            if (block === 4 && face.normal[1] !== 0) tile = 10;
+            if (block === 1) tile = face.normal[1] === 1 ? 0 : face.normal[1] === -1 ? 1 : blocks.length;
+            if (block === 4 && face.normal[1] !== 0) tile = blocks.length + 1;
             const faceUv = [[0, 1], [0, 0], [1, 0], [1, 1]];
             const points = face.corners;
             for (const cornerIndex of [0, 1, 2, 0, 2, 3]) {
               const corner = points[cornerIndex];
               positions.push(x + corner[0], y + corner[1], z + corner[2]);
               colors.push(face.light, face.light, face.light);
-              uvs.push((tile * 16 + 0.5 + faceUv[cornerIndex][0] * 15) / 256,
+              uvs.push((tile * 16 + 0.5 + faceUv[cornerIndex][0] * 15) / atlasCanvas.width,
                 (0.5 + faceUv[cornerIndex][1] * 15) / 16);
             }
           }
@@ -553,12 +761,13 @@
       const button = document.createElement("button");
       button.className = "hotbar-slot";
       button.type = "button";
-      button.setAttribute("aria-label", `${index + 1}: ${block.name}`);
+      const label = index < 9 ? `${index + 1}: ${block.name}` : block.name;
+      button.setAttribute("aria-label", label);
       button.setAttribute("aria-pressed", String(selectedBlock === block.id));
-      button.title = `${index + 1}: ${block.name}`;
+      button.title = label;
       const number = document.createElement("span");
       number.className = "slot-number";
-      number.textContent = String(index + 1);
+      number.textContent = index < 9 ? String(index + 1) : "";
       const swatch = document.createElement("canvas");
       swatch.className = "block-swatch";
       swatch.width = 16;
@@ -655,6 +864,11 @@
   }
 
   function render() {
+    const measureRender = !debugIndicator.hidden;
+    const renderStartedAt = measureRender ? performance.now() : 0;
+    renderDrawCalls = 0;
+    renderTriangles = 0;
+    renderChunkCount = 0;
     resizeCanvas();
     gl.clearColor(0.62, 0.82, 0.88, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -669,19 +883,29 @@
     gl.enableVertexAttribArray(uvAttribute);
     for (const mesh of chunkMeshes.values()) {
       if (!mesh.count) continue;
+      if (measureRender) renderChunkCount += 1;
       gl.bindBuffer(gl.ARRAY_BUFFER, mesh.position);
       gl.vertexAttribPointer(positionAttribute, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, mesh.color);
       gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, mesh.uv);
       gl.vertexAttribPointer(uvAttribute, 2, gl.FLOAT, false, 0, 0);
-      gl.drawArrays(gl.TRIANGLES, 0, mesh.count);
+      drawArrays(gl.TRIANGLES, 0, mesh.count);
     }
     gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 0);
     gl.disableVertexAttribArray(uvAttribute);
     gl.vertexAttrib2f(uvAttribute, 0, 0);
     renderTargetOutline();
     renderRemotePlayers(viewProjection);
+    if (measureRender) lastRenderDurationMs = performance.now() - renderStartedAt;
+  }
+
+  function drawArrays(mode, first, count) {
+    if (!debugIndicator.hidden) {
+      renderDrawCalls += 1;
+      if (mode === gl.TRIANGLES) renderTriangles += count / 3;
+    }
+    gl.drawArrays(mode, first, count);
   }
 
   function renderTargetOutline() {
@@ -709,7 +933,7 @@
     gl.bindBuffer(gl.ARRAY_BUFFER, targetColorBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, targetColors, gl.DYNAMIC_DRAW);
     gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
-    gl.drawArrays(gl.LINES, 0, targetPositions.length / 3);
+    drawArrays(gl.LINES, 0, targetPositions.length / 3);
   }
 
   function isRemotePlayerState(state) {
@@ -916,7 +1140,7 @@
     gl.bindBuffer(gl.ARRAY_BUFFER, avatarColorBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.DYNAMIC_DRAW);
     gl.vertexAttribPointer(colorAttribute, 3, gl.FLOAT, false, 0, 0);
-    gl.drawArrays(gl.TRIANGLES, 0, positions.length / 3);
+    drawArrays(gl.TRIANGLES, 0, positions.length / 3);
   }
 
   function collidesAt(x, feetY, z) {
@@ -1006,6 +1230,19 @@
       `Block  X ${blockX}  Y ${blockY}  Z ${blockZ}`,
       `Grounded ${player.grounded ? "yes" : "no"}  Vy ${player.velocityY.toFixed(3)}`,
       `Yaw ${(player.yaw * 180 / Math.PI).toFixed(1)}°  Pitch ${(player.pitch * 180 / Math.PI).toFixed(1)}°`,
+      performanceSummary(),
+    ].join("\n");
+  }
+
+  function performanceSummary() {
+    if (frameTimeSampleCount === 0) return "Performance  measuring...";
+    const samples = Array.from(frameTimeSamples.slice(0, frameTimeSampleCount)).sort((a, b) => a - b);
+    const total = samples.reduce((sum, duration) => sum + duration, 0);
+    const p95Index = Math.min(samples.length - 1, Math.ceil(samples.length * 0.95) - 1);
+    const fps = Math.round(samples.length * 1000 / total);
+    return [
+      `Performance  ${fps} FPS · frame p95 ${samples[p95Index].toFixed(1)} ms`,
+      `Render submit ${lastRenderDurationMs.toFixed(1)} ms · ${renderChunkCount} chunks · ${renderDrawCalls} calls · ${Math.round(renderTriangles / 100) / 10}k tris`,
     ].join("\n");
   }
 
@@ -1176,6 +1413,7 @@
     if (activeBlockAction?.source === "mouse") stopBlockAction();
   });
   canvas.addEventListener("pointerdown", (event) => {
+    prepareAudioForInteraction();
     if (event.pointerType !== "touch") return;
     enableTouchControls();
     event.preventDefault();
@@ -1287,6 +1525,7 @@
   }
   function bindTouchAction(button, action, heldAction) {
     button.addEventListener("pointerdown", (event) => {
+      prepareAudioForInteraction();
       event.preventDefault();
       event.stopPropagation();
       if (event.pointerType === "touch") enableTouchControls();
@@ -1331,6 +1570,7 @@
     player.pitch = Math.max(-1.48, Math.min(1.48, player.pitch - event.movementY * 0.0025));
   });
   window.addEventListener("keydown", (event) => {
+    prepareAudioForInteraction();
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyI" && !event.repeat) {
@@ -1348,7 +1588,12 @@
   window.addEventListener("keyup", (event) => keys.delete(event.code));
   window.addEventListener("blur", clearInput);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) clearInput();
+    if (document.hidden) {
+      clearInput();
+      stopAmbientChirp();
+    } else {
+      scheduleAmbientChirp();
+    }
   });
 
   function updateFullscreenControls() {
@@ -1385,6 +1630,11 @@
     expanded = document.fullscreenElement === gameCard;
     updateFullscreenControls();
   });
+  soundToggle.addEventListener("click", toggleSound);
+  soundVolume.addEventListener("input", () => {
+    soundVolumeLevel = Number(soundVolume.value);
+    saveAudioSettings();
+  });
   resetButton.addEventListener("click", () => {
     if (roomMode !== "solo") return;
     if (!window.confirm("ひとり用ワールドを新しい64×64の草原と森に置き換えますか？今の建築は削除されます。")) return;
@@ -1401,8 +1651,14 @@
   });
 
   function frame(time) {
-    const dt = Math.min((time - lastTime) / 1000 || 0, 1 / 30);
+    const frameInterval = lastTime ? time - lastTime : 0;
+    const dt = Math.min(frameInterval / 1000 || 0, 1 / 30);
     lastTime = time;
+    if (!debugIndicator.hidden && frameInterval > 0) {
+      frameTimeSamples[nextFrameTimeSample] = frameInterval;
+      nextFrameTimeSample = (nextFrameTimeSample + 1) % FRAME_SAMPLE_CAPACITY;
+      frameTimeSampleCount = Math.min(frameTimeSampleCount + 1, FRAME_SAMPLE_CAPACITY);
+    }
     update(dt);
     debugTimer += dt;
     if (debugTimer >= 0.1) {
@@ -1420,6 +1676,7 @@
 
   try {
     initializeRenderer();
+    loadAudioSettings();
     loadGame();
     updateWorldLabel();
     buildHotbar();

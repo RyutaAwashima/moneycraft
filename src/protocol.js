@@ -1,6 +1,6 @@
 import "../world-model.js";
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
 export const MAX_PLAYERS_PER_ROOM = 16;
 export const WORLD_DIMENSIONS = globalThis.MoneycraftWorld.defaultOptions;

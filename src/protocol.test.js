@@ -26,7 +26,7 @@ test("player states must be finite and inside world bounds", () => {
   assert.equal(isPlayerStatePayload({ ...valid, y: Number.NaN }), false);
   assert.equal(isPlayerStatePayload({ ...valid, pitch: 2 }), false);
   assert.equal(isPlayerStatePayload(null), false);
-  assert.equal(PROTOCOL_VERSION, 3);
+  assert.equal(PROTOCOL_VERSION, 4);
 });
 
 test("block edits validate identifiers, bounds and compare-and-set operations", () => {
@@ -35,9 +35,13 @@ test("block edits validate identifiers, bounds and compare-and-set operations", 
   assert.equal(isBlockEditPayload({ ...edit, block: 0, expectedBlock: 9 }), true);
   for (const invalid of [
     null, { ...edit, x: 64 }, { ...edit, y: -1 }, { ...edit, z: 1.5 },
-    { ...edit, block: 10 }, { ...edit, expectedBlock: 10 }, { ...edit, expectedBlock: 1 },
+    { ...edit, block: 16 }, { ...edit, expectedBlock: 16 }, { ...edit, expectedBlock: 1 },
     { ...edit, block: 0 }, { ...edit, requestId: "" }, { ...edit, requestId: "x".repeat(65) },
   ]) assert.equal(isBlockEditPayload(invalid), false);
+  for (let block = 10; block <= 15; block += 1) {
+    assert.equal(isBlockEditPayload({ ...edit, block }), true);
+    assert.equal(isBlockEditPayload({ ...edit, block: 0, expectedBlock: block }), true);
+  }
 });
 
 test("validation uses the room size, including coordinates beyond the old edge", () => {

@@ -15,6 +15,12 @@
     { id: 7, name: "レンガブロック", color: [0.68, 0.32, 0.25] },
     { id: 8, name: "白い壁ブロック", color: [0.9, 0.88, 0.82] },
     { id: 9, name: "窓ブロック", color: [0.48, 0.73, 0.83] },
+    { id: 10, name: "赤い壁ブロック", color: [0.79, 0.25, 0.23] },
+    { id: 11, name: "青い壁ブロック", color: [0.24, 0.44, 0.78] },
+    { id: 12, name: "黄色い壁ブロック", color: [0.94, 0.76, 0.24] },
+    { id: 13, name: "緑の壁ブロック", color: [0.29, 0.65, 0.42] },
+    { id: 14, name: "紫の壁ブロック", color: [0.58, 0.36, 0.72] },
+    { id: 15, name: "黒い壁ブロック", color: [0.22, 0.24, 0.27] },
   ].map((block) => Object.freeze({ ...block, color: Object.freeze(block.color) })));
 
   function isSupportedDimensions(value) {
