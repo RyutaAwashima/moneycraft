@@ -38,6 +38,15 @@ multiplayer room controls. Invitation links open the room-management tab.
   ceilings still block movement, and feet cannot rise above world height + 10.
 - Aim at a nearby block and left-click: mine it
 - Right-click an adjacent empty space: place the selected block
+- The main hand shows the confirmed block at the lower right, using its actual
+  texture and shape (including slabs, stairs and translucent windows). Picker
+  candidates do not change it until confirmed. The display is local only.
+- Middle-click while the mouse is captured, press `Q`, or use the touch
+  **スポイト** button to select the block under the crosshair within building
+  reach. This switches to its category and remembers the selection without
+  editing the world. It copies material only, not orientation, slab half or stair
+  corner shape; placement still derives those from the new hit and neighbors.
+  The picker disables eyedropping, and empty space leaves the selection unchanged.
 - Wood logs align their long axis with the face you place them against.
 - Hold the left or right mouse button while the pointer is locked to repeat mining or placement; on touch devices, hold the on-screen mine or place button
 - A thin gold outline marks the block currently under the crosshair

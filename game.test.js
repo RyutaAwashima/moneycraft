@@ -24,7 +24,10 @@ function createGame({
   const positionUploads = [];
   const outlineUploads = [];
   const renderEvents = [];
+  const heldRenderEvents = [];
   const viewMatrices = [];
+  let heldPass = false;
+  let viewMatrix;
   const bufferContents = new Map();
   const attributes = new Map();
   let boundBuffer;
@@ -43,7 +46,11 @@ function createGame({
     getAttribLocation: (_, name) => ["aPosition", "aColor", "aUv"].indexOf(name),
     getUniformLocation: (_, name) => name,
     uniform1i: (name, value) => { if (name === "uTextured") textured = Boolean(value); },
-    uniformMatrix4fv: (_, transpose, matrix) => { if (recordRendering) viewMatrices.push(Array.from(matrix)); },
+    clear: (mask) => { heldPass = mask === 256; },
+    uniformMatrix4fv: (_, transpose, matrix) => {
+      viewMatrix = Array.from(matrix);
+      if (recordRendering && !heldPass) viewMatrices.push(viewMatrix);
+    },
     bindBuffer: (_, buffer) => { boundBuffer = buffer; },
     vertexAttribPointer: (attribute) => attributes.set(attribute, boundBuffer),
     enable: (capability) => { if (capability === 3042) blending = true; },
@@ -60,9 +67,10 @@ function createGame({
     texImage2D: (...args) => textureUploads.push(args.at(-1)),
     drawArrays: (...args) => {
       drawCalls.push(args);
-      if (recordRendering) renderEvents.push({
+      if (recordRendering) (heldPass ? heldRenderEvents : renderEvents).push({
         mode: args[0], count: args[2], blending, depthWrite, textured, blendFactors,
         positions: bufferContents.get(attributes.get(0)),
+        uvs: bufferContents.get(attributes.get(2)), matrix: viewMatrix,
       });
     },
     TRIANGLES: 4,
@@ -73,6 +81,8 @@ function createGame({
     SRC_ALPHA: 770,
     ONE_MINUS_SRC_ALPHA: 771,
     ONE: 1,
+    DEPTH_BUFFER_BIT: 256,
+    COLOR_BUFFER_BIT: 16384,
   }, { get: (target, name) => target[name] ?? (() => {}) });
   class Element extends EventTarget {
     children = [];
@@ -233,7 +243,7 @@ function createGame({
   let state;
   window.addEventListener("moneycraft:send-player-state", (event) => { state = event.detail; });
   return { get model() { return model; }, worldApi, originalSave, elements, uploads, drawCalls, saved, soundEvents,
-    texturePixels, previews, textureUploads, uvUploads, positionUploads, outlineUploads, renderEvents, viewMatrices,
+    texturePixels, previews, textureUploads, uvUploads, positionUploads, outlineUploads, renderEvents, heldRenderEvents, viewMatrices,
     emit, join, change, selectBlock, roomWorld, window, document, timers,
     frame: (count = 1, interval = 1000 / 30) => {
       for (let i = 0; i < count; i += 1) { time += interval; frame(time); }
@@ -255,6 +265,203 @@ function pressJump(game) {
   input(game.window, "keydown", { code: "Space", repeat: false });
   input(game.window, "keyup", { code: "Space" });
 }
+
+test("main hand renders all materials with shared shapes, cropped UVs and glass blending", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  for (const block of game.worldApi.blocks) {
+    game.selectBlock(block.id);
+    game.frame();
+    const draw = game.heldRenderEvents.at(-1);
+    assert.equal(draw.mode, 4);
+    assert.equal(draw.textured, true);
+    assert.equal(draw.blending, block.id === 9);
+    assert.equal(draw.depthWrite, block.id !== 9);
+    assert.ok(draw.count > 0);
+    let area = 0;
+    for (let offset = 0; offset < draw.positions.length; offset += 9) {
+      const points = [0, 3, 6].map((start) => draw.positions.slice(offset + start, offset + start + 3));
+      const a = points[1].map((value, axis) => value - points[0][axis]);
+      const b = points[2].map((value, axis) => value - points[0][axis]);
+      area += Math.hypot(a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]) / 2;
+    }
+    assert.equal(area, block.id === 16 ? 4 : block.id === 17 ? 5.5 : 6);
+    for (let index = 0; index < draw.uvs.length; index += 2) {
+      const tile = Math.floor(draw.uvs[index] * 512 / 16);
+      assert.ok(block.id === 1 ? [0, 1, 17].includes(tile)
+        : block.id === 4 ? [3, 18].includes(tile) : tile === block.id - 1);
+      assert.ok(draw.uvs[index + 1] >= 0 && draw.uvs[index + 1] <= 1);
+    }
+  }
+  const before = game.uploads.length;
+  game.frame(2);
+  assert.ok(game.uploads.length - before <= 4, "held meshes are reused, not uploaded every frame");
+  assert.equal(game.renderEvents.at(-1).depthWrite, true);
+  assert.equal(game.renderEvents.at(-1).blending, false);
+});
+
+test("main hand stays below and right of the crosshair within portrait and landscape viewports", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  for (const [width, height] of [[960, 540], [390, 600], [768, 390]]) {
+    const canvas = game.elements.get("#game");
+    canvas.clientWidth = width;
+    canvas.clientHeight = height;
+    game.frame();
+    const { positions, matrix } = game.heldRenderEvents.at(-1);
+    for (let index = 0; index < positions.length; index += 3) {
+      const point = positions.slice(index, index + 3);
+      const clip = [0, 1, 2, 3].map((row) => matrix[12 + row]
+        + point.reduce((sum, value, axis) => sum + matrix[axis * 4 + row] * value, 0));
+      assert.ok(clip[0] / clip[3] > 0.2 && clip[0] / clip[3] < 1);
+      assert.ok(clip[1] / clip[3] < -0.2 && clip[1] / clip[3] > -1);
+      assert.ok(Math.abs(clip[2] / clip[3]) < 1);
+    }
+  }
+  const matrix = game.heldRenderEvents.at(-1).matrix;
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.window, "mousemove", { movementX: 250, movementY: -200 });
+  input(game.window, "keydown", { code: "KeyW" });
+  game.frame(3);
+  assert.deepEqual(game.heldRenderEvents.at(-1).matrix, matrix);
+});
+
+test("main hand follows confirmed selection only and restores saved category selection", () => {
+  const game = createGame({ recordRendering: true });
+  game.selectBlock(7);
+  game.frame();
+  const brick = game.heldRenderEvents.at(-1);
+  input(game.window, "keydown", { code: "KeyR" });
+  input(game.window, "keydown", { code: "ArrowDown" });
+  game.frame();
+  assert.deepEqual(game.heldRenderEvents.at(-1).uvs, brick.uvs);
+  input(game.window, "keydown", { code: "Escape" });
+  game.frame();
+  assert.deepEqual(game.heldRenderEvents.at(-1).uvs, brick.uvs);
+  input(game.window, "keydown", { code: "KeyR" });
+  input(game.window, "keydown", { code: "ArrowDown" });
+  input(game.window, "keydown", { code: "Enter" });
+  game.frame();
+  assert.notDeepEqual(game.heldRenderEvents.at(-1).uvs, brick.uvs);
+  const restored = createGame({
+    recordRendering: true, selectionSettings: game.saved.get("moneycraft-block-selection-v1"),
+  });
+  restored.frame();
+  assert.deepEqual(restored.heldRenderEvents.at(-1).uvs, game.heldRenderEvents.at(-1).uvs);
+});
+
+test("eyedropper selects every material, recalls its category and never sends block edits", () => {
+  for (let block = 1; block <= 17; block += 1) {
+    const game = createGame({ recordRendering: true });
+    const index = (2 * game.roomWorld.depth + 18) * game.roomWorld.width + 20;
+    game.roomWorld.blocks[index] = block;
+    game.join();
+    const edits = [];
+    game.window.addEventListener("moneycraft:send-block-edit", (event) => edits.push(event.detail));
+    input(game.window, "keydown", { code: "KeyQ" });
+    assert.equal(game.elements.get("#selected-block-name").textContent, game.worldApi.blocks[block - 1].name);
+    assert.match(game.elements.get("#game-message").textContent, /スポイト/);
+    const settings = JSON.parse(game.saved.get("moneycraft-block-selection-v1"));
+    assert.equal(settings.selections[settings.category], block);
+    input(game.window, "keydown", { code: "Digit6" });
+    input(game.window, "keydown", { code: `Digit${["nature", "building", "stairs", "slabs", "glass", "colors"].indexOf(settings.category) + 1}` });
+    assert.equal(game.elements.get("#selected-block-name").textContent, game.worldApi.blocks[block - 1].name);
+    assert.equal(edits.length, 0);
+    assert.equal(game.model.getBlock(20, 2, 18), block);
+  }
+});
+
+test("middle mouse and touch eyedroppers pick only once and obey picker and pointer-lock guards", () => {
+  const game = createGame();
+  game.roomWorld.blocks[(2 * game.roomWorld.depth + 18) * game.roomWorld.width + 20] = 7;
+  game.join();
+  const canvas = game.elements.get("#game");
+  input(canvas, "mousedown", { button: 1 });
+  assert.equal(game.elements.get("#selected-block-name").textContent, "草ブロック");
+  game.document.pointerLockElement = canvas;
+  assert.equal(input(canvas, "mousedown", { button: 1 }).defaultPrevented, true);
+  assert.equal(game.elements.get("#selected-block-name").textContent, "レンガブロック");
+  assert.equal(input(canvas, "auxclick", { button: 1 }).defaultPrevented, true);
+  game.selectBlock(3);
+  input(game.elements.get("#touch-pick"), "pointerdown", { pointerId: 91, pointerType: "touch" });
+  assert.equal(game.elements.get("#selected-block-name").textContent, "レンガブロック");
+  assert.equal(game.elements.get(".game-card").classList.contains("touch-enabled"), true);
+  game.selectBlock(3);
+  input(game.elements.get("#touch-pick"), "click", { detail: 0 });
+  assert.equal(game.elements.get("#selected-block-name").textContent, "レンガブロック");
+  game.selectBlock(3);
+  input(game.window, "keydown", { code: "KeyR" });
+  for (const action of [
+    () => input(game.window, "keydown", { code: "KeyQ" }),
+    () => input(canvas, "mousedown", { button: 1 }),
+    () => input(game.elements.get("#touch-pick"), "pointerdown", { pointerId: 92, pointerType: "touch" }),
+  ]) action();
+  assert.equal(game.elements.get("#selected-block-name").textContent, "石ブロック");
+});
+
+test("eyedropper ignores autorepeat and text inputs, reports misses, and stops held construction", () => {
+  const game = createGame();
+  game.roomWorld.blocks[(2 * game.roomWorld.depth + 18) * game.roomWorld.width + 20] = 7;
+  game.join();
+  input(game.window, "keydown", { code: "KeyQ", repeat: true });
+  assert.equal(game.elements.get("#selected-block-name").textContent, "草ブロック");
+  const event = new Event("keydown", { cancelable: true });
+  Object.defineProperties(event, {
+    code: { value: "KeyQ" }, target: { value: { tagName: "SELECT" } },
+  });
+  game.window.dispatchEvent(event);
+  assert.equal(game.elements.get("#selected-block-name").textContent, "草ブロック");
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.elements.get("#game"), "mousedown", { button: 0 });
+  input(game.window, "keydown", { code: "KeyQ" });
+  assert.equal(game.runTimeout(200), false);
+  input(game.window, "mousemove", { movementX: 0, movementY: -500 });
+  input(game.window, "keydown", { code: "KeyQ" });
+  assert.match(game.elements.get("#game-message").textContent, /照準/);
+  assert.equal(game.elements.get("#selected-block-name").textContent, "レンガブロック");
+});
+
+test("eyedropper respects empty slab space and glass occlusion instead of selecting hidden blocks", () => {
+  for (const [front, selected] of [[16, 7], [9, 9]]) {
+    const game = createGame();
+    const index = (2 * game.roomWorld.depth + 18) * game.roomWorld.width + 20;
+    game.roomWorld.blocks[index] = front;
+    game.roomWorld.blocks[index - game.roomWorld.width] = 7;
+    game.join();
+    game.document.pointerLockElement = game.elements.get("#game");
+    input(game.window, "mousemove", { movementX: 0, movementY: (-0.12 - 0.1) / 0.0025 });
+    input(game.window, "keydown", { code: "KeyQ" });
+    assert.equal(game.elements.get("#selected-block-name").textContent, game.worldApi.blocks[selected - 1].name);
+  }
+});
+
+test("eyedropper copies material but placement still derives log axes and slab or stair half from the new hit", () => {
+  for (const block of [4, 16, 17]) {
+    const game = createGame();
+    const index = (2 * game.roomWorld.depth + 18) * game.roomWorld.width + 20;
+    const original = block === 4 ? game.model.orientationFromNormal([1, 0, 0]) : 20;
+    game.roomWorld.blocks[index] = block;
+    game.roomWorld.orientations[index] = original;
+    game.join();
+    const canvas = game.elements.get("#game");
+    game.document.pointerLockElement = canvas;
+    input(game.window, "mousemove", { movementX: 0, movementY: (-0.12 - 0.2) / 0.0025 });
+    input(game.window, "keydown", { code: "KeyQ" });
+    assert.equal(game.elements.get("#selected-block-name").textContent, game.worldApi.blocks[block - 1].name);
+    game.change(1, 20, 2, 18, 3, block);
+    input(game.window, "mousemove", { movementX: 0, movementY: (0.2 + 0.2) / 0.0025 });
+    let edit;
+    game.window.addEventListener("moneycraft:send-block-edit", (event) => { edit = event.detail; });
+    input(canvas, "mousedown", { button: 2 });
+    assert.ok(edit);
+    assert.equal(edit.block, block);
+    const direction = [0, Math.sin(-0.2), -Math.cos(-0.2)];
+    assert.equal(edit.orientation, block === 4 ? game.model.orientationFromNormal([0, 0, 1])
+      : block === 16 ? 0 : game.worldApi.orientationFromFacing(direction));
+    assert.notEqual(edit.orientation, original);
+  }
+});
 
 test("jump acceleration includes two successive five-percent increases while launch speed stays unchanged", () => {
   const game = createGame();

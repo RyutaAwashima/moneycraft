@@ -16,6 +16,7 @@
   const virtualStick = document.querySelector("#virtual-stick");
   const touchMine = document.querySelector("#touch-mine");
   const touchPlace = document.querySelector("#touch-place");
+  const touchPick = document.querySelector("#touch-pick");
   const touchJump = document.querySelector("#touch-jump");
   const touchDescend = document.querySelector("#touch-descend");
   const flightStatus = document.querySelector("#flight-status");
@@ -309,6 +310,8 @@
   let atlasCanvas;
   const CHUNK_SIZE = 8;
   const chunkMeshes = new Map();
+  const heldBlockMeshes = new Map();
+  const heldBlockDirection = vecNormalize([-1, -0.65, -1.5]);
   let transparentMesh;
   let transparentFaces = [];
   let transparentMeshDirty = true;
@@ -838,12 +841,6 @@
               min: box.min.map((value, dimension) => value + face.neighbor[dimension]),
               max: box.max.map((value, dimension) => value + face.neighbor[dimension]),
             }));
-            let tile = block - 1;
-            if (block === 1) tile = face.normal[1] === 1 ? 0 : face.normal[1] === -1 ? 1 : blocks.length;
-            if (block === 4 && Math.abs(
-              face.normal[0] * axis[0] + face.normal[1] * axis[1] + face.normal[2] * axis[2],
-            ) === 1) tile = blocks.length + 1;
-            const faceUv = [[0, 1], [0, 0], [1, 0], [1, 1]];
             for (const bounds of boxes) {
               let visibleBounds = [bounds];
               for (const neighbor of [...boxes.filter((box) => box !== bounds), ...neighbors]) {
@@ -857,21 +854,7 @@
                       : face.normal[dimension] > 0 ? visible.max[dimension] : visible.min[dimension])),
                   depth: 0,
                 } : { positions, colors, uvs };
-                for (const cornerIndex of [0, 1, 2, 0, 2, 3]) {
-                  const corner = face.corners[cornerIndex].map((value, dimension) =>
-                    value === 0 ? visible.min[dimension] : visible.max[dimension]);
-                  const uv = faceUv[cornerIndex].slice();
-                  for (let dimension = 0; dimension < 3; dimension += 1) {
-                    const alongU = face.corners[3][dimension] - face.corners[0][dimension];
-                    const alongV = face.corners[0][dimension] - face.corners[1][dimension];
-                    if (alongU) uv[0] = (corner[dimension] - face.corners[0][dimension]) * alongU;
-                    if (alongV) uv[1] = (corner[dimension] - face.corners[1][dimension]) * alongV;
-                  }
-                  target.positions.push(x + corner[0], y + corner[1], z + corner[2]);
-                  target.colors.push(face.light, face.light, face.light);
-                  target.uvs.push((tile * 16 + 0.5 + uv[0] * 15) / atlasCanvas.width,
-                    (0.5 + uv[1] * 15) / 16);
-                }
+                appendBlockFace(target, block, axis, face, visible, [x, y, z]);
                 if (translucent) translucentFaces.push(target);
               }
             }
@@ -892,6 +875,62 @@
     for (const [buffer, data] of [[mesh.position, positions], [mesh.color, colors], [mesh.uv, uvs]]) {
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+    }
+  }
+
+  function appendBlockFace(target, block, axis, face, bounds, offset) {
+    let tile = block - 1;
+    if (block === 1) tile = face.normal[1] === 1 ? 0 : face.normal[1] === -1 ? 1 : blocks.length;
+    if (block === 4 && Math.abs(face.normal.reduce((sum, value, index) =>
+      sum + value * axis[index], 0)) === 1) tile = blocks.length + 1;
+    const faceUv = [[0, 1], [0, 0], [1, 0], [1, 1]];
+    for (const cornerIndex of [0, 1, 2, 0, 2, 3]) {
+      const corner = face.corners[cornerIndex].map((value, dimension) =>
+        value === 0 ? bounds.min[dimension] : bounds.max[dimension]);
+      const uv = faceUv[cornerIndex].slice();
+      for (let dimension = 0; dimension < 3; dimension += 1) {
+        const alongU = face.corners[3][dimension] - face.corners[0][dimension];
+        const alongV = face.corners[0][dimension] - face.corners[1][dimension];
+        if (alongU) uv[0] = (corner[dimension] - face.corners[0][dimension]) * alongU;
+        if (alongV) uv[1] = (corner[dimension] - face.corners[1][dimension]) * alongV;
+      }
+      target.positions.push(...corner.map((value, dimension) => value + offset[dimension]));
+      target.colors.push(face.light, face.light, face.light);
+      target.uvs.push((tile * 16 + 0.5 + uv[0] * 15) / atlasCanvas.width,
+        (0.5 + uv[1] * 15) / 16);
+    }
+  }
+
+  function buildHeldBlockMeshes() {
+    for (const block of blocks) {
+      const boxes = getBlockBoxes(block.id);
+      const surfaces = [];
+      for (const face of faces) for (const bounds of boxes) {
+        let visible = [bounds];
+        for (const other of boxes.filter((box) => box !== bounds)) {
+          visible = visible.flatMap((part) => visibleFaceBounds(part, other, face.normal));
+        }
+        for (const part of visible) {
+          const center = part.min.map((value, index) => face.normal[index] === 0
+            ? (value + part.max[index]) / 2 : face.normal[index] > 0 ? part.max[index] : value);
+          surfaces.push({ face, bounds: part,
+            depth: center.reduce((sum, value, index) => sum + value * heldBlockDirection[index], 0) });
+        }
+      }
+      if (block.renderLayer === "translucent") surfaces.sort((a, b) => b.depth - a.depth);
+      const data = { positions: [], colors: [], uvs: [] };
+      for (const surface of surfaces) {
+        appendBlockFace(data, block.id, worldModel.getOrientationAxes(0).y,
+          surface.face, surface.bounds, [0, 0, 0]);
+      }
+      const mesh = { position: gl.createBuffer(), color: gl.createBuffer(), uv: gl.createBuffer(),
+        count: data.positions.length / 3 };
+      if (!mesh.position || !mesh.color || !mesh.uv) throw new Error("Could not create held block buffers.");
+      for (const [buffer, values] of [[mesh.position, data.positions], [mesh.color, data.colors], [mesh.uv, data.uvs]]) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(values), gl.STATIC_DRAW);
+      }
+      heldBlockMeshes.set(block.id, mesh);
     }
   }
 
@@ -1171,7 +1210,36 @@
     renderRemotePlayers(viewProjection);
     renderTargetOutline();
     renderTransparentBlocks(eye, direction);
+    renderHeldBlock(viewProjection);
     if (measureRender) lastRenderDurationMs = performance.now() - renderStartedAt;
+  }
+
+  function renderHeldBlock(worldViewProjection) {
+    const aspect = canvas.width / canvas.height;
+    // Keep a fixed apparent size in portrait and landscape, away from the crosshair.
+    const halfHeight = Math.max(1, 1 / aspect);
+    const halfWidth = halfHeight * aspect;
+    const scale = 0.48;
+    const projection = new Float32Array([
+      scale / halfWidth, 0, 0, 0, 0, scale / halfHeight, 0, 0,
+      0, 0, -0.1, 0, 0.62, -0.62, 0, 1,
+    ]);
+    const eye = heldBlockDirection.map((value) => 0.5 - value * 4);
+    gl.depthMask(true);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, "uViewProjection"), false,
+      matrixMultiply(projection, lookAt(eye, heldBlockDirection)));
+    gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 1);
+    gl.enableVertexAttribArray(uvAttribute);
+    if (blocks[selectedBlock - 1].renderLayer === "translucent") {
+      gl.enable(gl.BLEND);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthMask(false);
+    }
+    drawTexturedMesh(heldBlockMeshes.get(selectedBlock));
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, "uViewProjection"), false, worldViewProjection);
   }
 
   function drawTexturedMesh(mesh) {
@@ -1696,6 +1764,27 @@
     return changeBlock(target.x, target.y, target.z, 0);
   }
 
+  function pickBlock() {
+    if (pickerOpen) return false;
+    stopBlockAction();
+    const target = raycast();
+    if (!target) {
+      message.textContent = "スポイト：照準を近くのブロックに合わせてください";
+      return false;
+    }
+    const block = getBlock(target.x, target.y, target.z);
+    const index = blockCategories.findIndex((category) => category.blocks.includes(block));
+    if (index < 0) {
+      console.error("Target block has no selection category.", block);
+      message.textContent = "このブロックは選択できません";
+      return false;
+    }
+    categorySelections.set(blockCategories[index].id, block);
+    selectCategory(index);
+    message.textContent = `スポイト：${blocks[block - 1].name}を選択しました`;
+    return true;
+  }
+
   function placeBlock() {
     const target = raycast();
     if (!target) {
@@ -1808,6 +1897,9 @@
   });
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  canvas.addEventListener("auxclick", (event) => {
+    if (event.button === 1) event.preventDefault();
+  });
   canvas.addEventListener("click", (event) => {
     if (pickerOpen) return;
     if (event.pointerType === "touch") return;
@@ -1836,6 +1928,10 @@
   });
   canvas.addEventListener("mousedown", (event) => {
     if (document.pointerLockElement !== canvas) return;
+    if (event.button === 1) {
+      event.preventDefault();
+      pickBlock();
+    }
     if (event.button === 0) startBlockAction("mine", "mouse");
     if (event.button === 2) startBlockAction("place", "mouse");
   });
@@ -1985,6 +2081,10 @@
   }
   bindTouchAction(touchMine, mineBlock, "mine");
   bindTouchAction(touchPlace, placeBlock, "place");
+  bindTouchAction(touchPick, pickBlock);
+  touchPick.addEventListener("click", (event) => {
+    if (event.detail === 0) pickBlock();
+  });
   bindTouchAction(touchJump, jump, "up");
   bindTouchAction(touchDescend, () => {}, "down");
   document.addEventListener("pointerlockchange", () => {
@@ -2035,6 +2135,11 @@
       return;
     }
     if (event.target.tagName === "BUTTON" && ["Enter", "Space"].includes(event.code)) return;
+    if (event.code === "KeyQ") {
+      event.preventDefault();
+      if (!event.repeat) pickBlock();
+      return;
+    }
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyI" && !event.repeat) {
       debugIndicator.hidden = !debugIndicator.hidden;
@@ -2155,6 +2260,7 @@
 
   try {
     initializeRenderer();
+    buildHeldBlockMeshes();
     loadAudioSettings();
     loadGame();
     loadBlockSelection();

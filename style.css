@@ -774,6 +774,11 @@ body.game-expanded {
   bottom: 88px;
 }
 
+.touch-pick {
+  top: 12px;
+  left: 12px;
+}
+
 .touch-jump {
   right: 20px;
   bottom: 20px;
