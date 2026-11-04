@@ -273,12 +273,6 @@
     { normal: [0, 0, 1], neighbor: [0, 0, 1], light: 0.9, corners: [[1, 0, 1], [1, 1, 1], [0, 1, 1], [0, 0, 1]] },
     { normal: [0, 0, -1], neighbor: [0, 0, -1], light: 0.68, corners: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]] },
   ];
-  const avatarFaces = [
-    [0, 1, 2, 0, 2, 3], [4, 7, 6, 4, 6, 5],
-    [0, 4, 5, 0, 5, 1], [3, 2, 6, 3, 6, 7],
-    [1, 5, 6, 1, 6, 2], [0, 3, 7, 0, 7, 4],
-  ];
-
   let player = { x: 20.5, y: 0, z: 29.5, velocityY: 0, grounded: false, yaw: 0, pitch: -0.12 };
   let stepViewOffset = 0;
   const STEP_VIEW_RESPONSE = 20;
@@ -301,6 +295,8 @@
   let program;
   let avatarPositionBuffer;
   let avatarColorBuffer;
+  let remoteAvatarMesh;
+  let remoteAvatarLabelHeight;
   let targetPositionBuffer;
   let targetColorBuffer;
   let positionAttribute;
@@ -575,6 +571,12 @@
   }
 
   function initializeRenderer() {
+    remoteAvatarMesh = globalThis.MoneycraftAvatar.createMesh(globalThis.MoneycraftAvatar.defaults, "soft-doll");
+    remoteAvatarLabelHeight = 0;
+    for (let offset = 1; offset < remoteAvatarMesh.positions.length; offset += 3) {
+      remoteAvatarLabelHeight = Math.max(remoteAvatarLabelHeight, remoteAvatarMesh.positions[offset]);
+    }
+    remoteAvatarLabelHeight += 0.12;
     const vertexShader = compileShader(gl.VERTEX_SHADER, `
       attribute vec3 aPosition;
       attribute vec3 aColor;
@@ -1388,11 +1390,15 @@
         state: null,
         target: null,
         lastStateAt: 0,
+        mesh: remoteAvatarMesh,
+        appearanceKey: JSON.stringify(globalThis.MoneycraftAvatar.defaults),
+        labelHeight: remoteAvatarLabelHeight,
       };
       remotePlayers.set(playerInfo.id, remote);
     } else {
       remote.displayName = playerInfo.displayName;
     }
+    if (playerInfo.appearance !== undefined) updateRemoteAppearance(remote, playerInfo.appearance);
     const label = getRemotePlayerLabel(playerInfo.id);
     label.textContent = playerInfo.displayName;
     label.hidden = !remote.state;
@@ -1400,6 +1406,25 @@
     if (!remote.state) remote.state = { ...playerInfo.state };
     remote.target = { ...playerInfo.state };
     remote.lastStateAt = performance.now();
+  }
+
+  function updateRemoteAppearance(remote, appearance) {
+    const avatar = globalThis.MoneycraftAvatar;
+    if (!avatar.isAppearance(appearance)) {
+      console.error("Could not display an invalid player appearance.");
+      message.textContent = "プレイヤーの外観データが正しくありません";
+      return;
+    }
+    const key = JSON.stringify(appearance, Object.keys(avatar.defaults));
+    if (key === remote.appearanceKey) return;
+    remote.mesh = key === JSON.stringify(avatar.defaults)
+      ? remoteAvatarMesh : avatar.createMesh(appearance, "soft-doll");
+    remote.appearanceKey = key;
+    remote.labelHeight = 0;
+    for (let offset = 1; offset < remote.mesh.positions.length; offset += 3) {
+      remote.labelHeight = Math.max(remote.labelHeight, remote.mesh.positions[offset]);
+    }
+    remote.labelHeight += 0.12;
   }
 
   function removeRemotePlayer(id) {
@@ -1445,10 +1470,12 @@
         id: update.playerId,
         displayName: update.displayName,
         state: update.state,
+        appearance: update.appearance,
       });
       remote = remotePlayers.get(update.playerId);
     }
     if (!remote) return;
+    if (update.appearance !== undefined) updateRemoteAppearance(remote, update.appearance);
     remote.target = { ...update.state };
     remote.lastStateAt = performance.now();
     getRemotePlayerLabel(remote.id).hidden = false;
@@ -1469,39 +1496,19 @@
     };
   }
 
-  function remotePlayerColor(id) {
-    let hash = 2166136261;
-    for (let index = 0; index < id.length; index += 1) {
-      hash = Math.imul(hash ^ id.charCodeAt(index), 16777619);
-    }
-    return [
-      0.36 + ((hash >>> 16) & 0xff) / 510,
-      0.36 + ((hash >>> 8) & 0xff) / 510,
-      0.36 + (hash & 0xff) / 510,
-    ];
-  }
-
-  function appendAvatarBox(positions, colors, remote, center, halfSize, color) {
-    const corners = [
-      [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
-      [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
-    ];
-    const cosYaw = Math.cos(remote.state.yaw);
-    const sinYaw = Math.sin(remote.state.yaw);
-    const transformed = corners.map(([x, y, z]) => {
-      const localX = x * halfSize[0];
-      const localZ = z * halfSize[2];
-      return [
-        remote.state.x + center[0] + localX * cosYaw + localZ * sinYaw,
-        remote.state.y + center[1] + y * halfSize[1],
-        remote.state.z + center[2] - localX * sinYaw + localZ * cosYaw,
-      ];
-    });
-    for (const face of avatarFaces) {
-      for (const index of face) {
-        positions.push(...transformed[index]);
-        colors.push(...color);
-      }
+  function appendRemoteAvatar(positions, colors, remote) {
+    const { state, mesh } = remote;
+    // The model faces +Z; movement yaw zero faces -Z.
+    const yaw = Math.PI - state.yaw;
+    const cosYaw = Math.cos(yaw);
+    const sinYaw = Math.sin(yaw);
+    for (let offset = 0; offset < mesh.positions.length; offset += 3) {
+      const x = mesh.positions[offset];
+      const y = mesh.positions[offset + 1];
+      const z = mesh.positions[offset + 2];
+      positions.push(state.x + x * cosYaw + z * sinYaw, state.y + y,
+        state.z - x * sinYaw + z * cosYaw);
+      colors.push(mesh.colors[offset], mesh.colors[offset + 1], mesh.colors[offset + 2]);
     }
   }
 
@@ -1535,16 +1542,11 @@
         continue;
       }
 
-      const color = remotePlayerColor(remote.id);
-      appendAvatarBox(positions, colors, remote, [0, 0.98, 0], [0.23, 0.34, 0.16], color);
-      appendAvatarBox(positions, colors, remote, [0, 1.48, 0], [0.2, 0.2, 0.2], color.map((channel) => Math.min(1, channel * 1.18)));
-      appendAvatarBox(positions, colors, remote, [-0.3, 1.02, 0], [0.09, 0.29, 0.11], color);
-      appendAvatarBox(positions, colors, remote, [0.3, 1.02, 0], [0.09, 0.29, 0.11], color);
-      appendAvatarBox(positions, colors, remote, [-0.12, 0.34, 0], [0.105, 0.31, 0.12], color.map((channel) => channel * 0.78));
-      appendAvatarBox(positions, colors, remote, [0.12, 0.34, 0], [0.105, 0.31, 0.12], color.map((channel) => channel * 0.78));
+      appendRemoteAvatar(positions, colors, remote);
 
       const label = getRemotePlayerLabel(remote.id);
-      const screenPosition = projectToCanvas(viewProjection, remote.state.x, remote.state.y + 1.75, remote.state.z);
+      const screenPosition = projectToCanvas(viewProjection, remote.state.x,
+        remote.state.y + remote.labelHeight, remote.state.z);
       label.hidden = !screenPosition;
       if (screenPosition) {
         label.style.left = `${screenPosition.x}px`;
@@ -1879,6 +1881,10 @@
   window.addEventListener("moneycraft:player-joined", receivePlayerJoined);
   window.addEventListener("moneycraft:player-state", receivePlayerState);
   window.addEventListener("moneycraft:player-left", (event) => removeRemotePlayer(event.detail?.id));
+  window.addEventListener("moneycraft:player-appearance", (event) => {
+    const remote = remotePlayers.get(event.detail?.playerId);
+    if (remote) updateRemoteAppearance(remote, event.detail.appearance);
+  });
   window.addEventListener("moneycraft:room-connecting", enterRoom);
   window.addEventListener("moneycraft:room-left", leaveSharedWorld);
   window.addEventListener("moneycraft:room-closed", leaveSharedWorld);

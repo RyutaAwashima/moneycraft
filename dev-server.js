@@ -15,6 +15,10 @@ const files = new Map([
   ["/multiplayer.js", ["multiplayer.js", "text/javascript; charset=utf-8"]],
   ["/vendor/qrcode.js", ["vendor/qrcode.js", "text/javascript; charset=utf-8"]],
   ["/game.js", ["game.js", "text/javascript; charset=utf-8"]],
+  ["/avatar.html", ["avatar.html", "text/html; charset=utf-8"]],
+  ["/avatar.css", ["avatar.css", "text/css; charset=utf-8"]],
+  ["/avatar-model.js", ["avatar-model.js", "text/javascript; charset=utf-8"]],
+  ["/avatar-editor.js", ["avatar-editor.js", "text/javascript; charset=utf-8"]],
 ]);
 
 createServer(async (request, response) => {

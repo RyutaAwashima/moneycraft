@@ -80,6 +80,17 @@ button {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.avatar-entry {
+  color: #69766e;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.avatar-entry a {
+  color: var(--green);
+  text-underline-offset: 3px;
+}
+
 .workspace-tab {
   min-height: 38px;
   flex: 1;

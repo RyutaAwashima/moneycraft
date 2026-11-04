@@ -70,6 +70,7 @@ function createGame({
       if (recordRendering) (heldPass ? heldRenderEvents : renderEvents).push({
         mode: args[0], count: args[2], blending, depthWrite, textured, blendFactors,
         positions: bufferContents.get(attributes.get(0)),
+        colors: bufferContents.get(attributes.get(1)),
         uvs: bufferContents.get(attributes.get(2)), matrix: viewMatrix,
       });
     },
@@ -197,6 +198,13 @@ function createGame({
   context.globalThis = context;
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "world-model.js"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "avatar-model.js"), "utf8"), context);
+  const avatarApi = context.MoneycraftAvatar;
+  let avatarMeshBuilds = 0;
+  context.MoneycraftAvatar = {
+    ...avatarApi,
+    createMesh: (...args) => { avatarMeshBuilds += 1; return avatarApi.createMesh(...args); },
+  };
   const worldApi = context.MoneycraftWorld;
   if (soloWorld) saved.set("moneycraft-3d-world-v2", JSON.stringify({
     world: soloWorld, x: 20.5, z: 20.5, yaw: 0,
@@ -244,7 +252,8 @@ function createGame({
   window.addEventListener("moneycraft:send-player-state", (event) => { state = event.detail; });
   return { get model() { return model; }, worldApi, originalSave, elements, uploads, drawCalls, saved, soundEvents,
     texturePixels, previews, textureUploads, uvUploads, positionUploads, outlineUploads, renderEvents, heldRenderEvents, viewMatrices,
-    emit, join, change, selectBlock, roomWorld, window, document, timers,
+    emit, join, change, selectBlock, roomWorld, window, document, timers, avatarApi,
+    get avatarMeshBuilds() { return avatarMeshBuilds; },
     frame: (count = 1, interval = 1000 / 30) => {
       for (let i = 0; i < count; i += 1) { time += interval; frame(time); }
     },
@@ -265,6 +274,109 @@ function pressJump(game) {
   input(game.window, "keydown", { code: "Space", repeat: false });
   input(game.window, "keyup", { code: "Space" });
 }
+
+test("remote players use the shared default soft-doll mesh with feet origin and movement-facing yaw", () => {
+  const game = createGame({ recordRendering: true });
+  const mesh = game.avatarApi.createMesh(game.avatarApi.defaults, "soft-doll");
+  for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    const state = { x: 20.5, y: 1, z: 15.5, yaw, pitch: 0.6 };
+    game.advance(1);
+    game.join([{ id: "other", displayName: "Builder", state }]);
+    game.renderEvents.length = 0;
+    game.frame();
+    const draw = game.renderEvents.find((event) => !event.textured && event.mode === 4);
+    assert.ok(draw);
+    assert.equal(draw.count, mesh.positions.length / 3);
+    assert.deepEqual(draw.colors, Array.from(mesh.colors));
+    const angle = Math.PI - yaw;
+    for (let offset = 0; offset < mesh.positions.length; offset += 3) {
+      const [x, y, z] = mesh.positions.slice(offset, offset + 3);
+      const expected = [state.x + x * Math.cos(angle) + z * Math.sin(angle), state.y + y,
+        state.z - x * Math.sin(angle) + z * Math.cos(angle)];
+      assert.ok(expected.every((value, axis) => Math.abs(draw.positions[offset + axis] - value) < 0.000002));
+    }
+    assert.equal(Math.min(...draw.positions.filter((_, offset) => offset % 3 === 1)), state.y);
+    assert.equal(draw.blending, false);
+    assert.equal(draw.depthWrite, true);
+    assert.equal(game.avatarMeshBuilds, 1, "room changes and rendering reuse the default mesh");
+    const maxY = Math.max(...mesh.positions.filter((_, offset) => offset % 3 === 1));
+    const m = draw.matrix;
+    const labelY = state.y + maxY + 0.12;
+    const clipY = m[1] * state.x + m[5] * labelY + m[9] * state.z + m[13];
+    const clipW = m[3] * state.x + m[7] * labelY + m[11] * state.z + m[15];
+    const label = game.elements.get("#remote-player-labels").children.at(-1);
+    assert.equal(label.hidden, false);
+    assert.ok(Math.abs(parseFloat(label.style.top) - (1 - clipY / clipW) * 270) < 0.000001);
+  }
+  assert.deepEqual(game.errors, []);
+});
+
+test("default avatar geometry is reused across players, interpolation, departure and timeout", () => {
+  const game = createGame({ recordRendering: true });
+  game.advance(1);
+  game.join(["one", "two"].map((id, index) => ({ id, displayName: id,
+    state: { x: 18.5 + index * 3, y: 1, z: 15.5, yaw: 0, pitch: 0 } })));
+  const count = game.avatarApi.createMesh(game.avatarApi.defaults, "soft-doll").positions.length / 3;
+  const render = () => {
+    game.renderEvents.length = 0;
+    game.frame();
+    return game.renderEvents.find((event) => !event.textured && event.mode === 4);
+  };
+  assert.equal(render().count, count * 2);
+  game.emit("player-state", { playerId: "one",
+    state: { x: 19.5, y: 1, z: 15.5, yaw: Math.PI / 2, pitch: 0 } });
+  assert.equal(render().count, count * 2);
+  game.emit("player-left", { id: "two" });
+  assert.equal(render().count, count);
+  game.advance(5001);
+  assert.equal(render(), undefined);
+  game.emit("player-joined", { id: "three", displayName: "three",
+    state: { x: 20.5, y: 1, z: 15.5, yaw: 0, pitch: 0 } });
+  assert.equal(render().count, count);
+  game.emit("room-left", {});
+  assert.equal(render(), undefined);
+  assert.equal(game.avatarMeshBuilds, 1);
+  assert.deepEqual(game.errors, []);
+});
+
+test("remote saved appearances build only on changes and recover after timeout with roster metadata", () => {
+  const game = createGame({ recordRendering: true });
+  const appearance = { ...game.avatarApi.defaults, hair: "twintails", hairColor: "lavender", accessory: "cap" };
+  const state = { x: 20.5, y: 1, z: 15.5, yaw: Math.PI, pitch: 0 };
+  game.advance(1);
+  game.join([{ id: "other", displayName: "Other", state, appearance }]);
+  const render = () => {
+    game.renderEvents.length = 0;
+    game.frame();
+    return game.renderEvents.find((event) => !event.textured && event.mode === 4);
+  };
+  const mesh = game.avatarApi.createMesh(appearance, "soft-doll");
+  let draw = render();
+  assert.equal(draw.count, mesh.positions.length / 3);
+  assert.deepEqual(draw.colors, Array.from(mesh.colors));
+  assert.equal(game.avatarMeshBuilds, 2);
+  const label = game.elements.get("#remote-player-labels").children.at(-1);
+  const oldTop = parseFloat(label.style.top);
+  const repeated = Object.fromEntries(Object.entries(appearance).reverse());
+  game.emit("player-appearance", { playerId: "other", appearance: repeated });
+  game.emit("player-state", { playerId: "other", state, appearance });
+  render();
+  assert.equal(game.avatarMeshBuilds, 2);
+  const changed = { ...appearance, hair: "none", accessory: "none" };
+  game.emit("player-appearance", { playerId: "other", appearance: changed });
+  draw = render();
+  assert.equal(game.avatarMeshBuilds, 3);
+  assert.ok(parseFloat(label.style.top) > oldTop, "name follows the shorter head silhouette");
+  assert.deepEqual(draw.colors, Array.from(game.avatarApi.createMesh(changed, "soft-doll").colors));
+  game.advance(5001);
+  assert.equal(render(), undefined);
+  game.emit("player-state", { playerId: "other", displayName: "Other", state, appearance: changed });
+  assert.equal(render().count, draw.count);
+  assert.equal(game.avatarMeshBuilds, 4);
+  game.emit("player-left", { id: "other" });
+  assert.equal(render(), undefined);
+  assert.deepEqual(game.errors, []);
+});
 
 test("main hand renders all materials with shared shapes, cropped UVs and glass blending", () => {
   const game = createGame({ recordRendering: true });

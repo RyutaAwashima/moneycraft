@@ -7,6 +7,7 @@ import {
   PROTOCOL_VERSION,
   WORLD_DIMENSIONS,
   isPlayerStatePayload,
+  isPlayerAppearancePayload,
   isBlockEditPayload,
 } from "./protocol.js";
 
@@ -623,6 +624,7 @@ export class Room {
       id: newOpaqueId(),
       displayName: this.createDisplayName(currentSockets),
       state: null,
+      appearance: { ...globalThis.MoneycraftAvatar.defaults },
       messageWindowStart: Date.now(),
       messageCount: 0,
       editCount: 0,
@@ -637,7 +639,7 @@ export class Room {
       payload: {
         roomCode: new URL(request.url).searchParams.get("code"),
         workName: room.workName || "新しい作品",
-        player: { id: player.id, displayName: player.displayName },
+        player: { id: player.id, displayName: player.displayName, appearance: player.appearance },
         players: this.listPlayers(currentSockets),
         world: snapshot.world,
         revision: snapshot.revision,
@@ -647,7 +649,7 @@ export class Room {
     this.broadcast({
       v: PROTOCOL_VERSION,
       type: "player-joined",
-      payload: { id: player.id, displayName: player.displayName },
+      payload: { id: player.id, displayName: player.displayName, appearance: player.appearance },
     }, server);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -759,6 +761,7 @@ export class Room {
         id: player.id,
         displayName: player.displayName,
         state: player.state,
+        appearance: player.appearance ?? { ...globalThis.MoneycraftAvatar.defaults },
       }];
     });
   }
@@ -833,6 +836,7 @@ export class Room {
       player.dimensions = { width: dimensions.width, depth: dimensions.depth, height: dimensions.height };
     }
     if (!((packet.type === "player-state" && isPlayerStatePayload(packet.payload, dimensions))
+      || (packet.type === "player-appearance" && isPlayerAppearancePayload(packet.payload))
       || (packet.type === "block-edit" && isBlockEditPayload(packet.payload, dimensions))
       || (packet.type === "world-request" && packet.payload === null))) {
       this.send(socket, { v: PROTOCOL_VERSION, type: "error", payload: { code: "invalid_message" } });
@@ -876,6 +880,16 @@ export class Room {
         v: PROTOCOL_VERSION,
         type: "error",
         payload: { code: "rate_limited" },
+      });
+      return;
+    }
+
+    if (packet.type === "player-appearance") {
+      player.appearance = packet.payload;
+      socket.serializeAttachment(player);
+      this.broadcast({
+        v: PROTOCOL_VERSION, type: "player-appearance",
+        payload: { playerId: player.id, appearance: player.appearance },
       });
       return;
     }

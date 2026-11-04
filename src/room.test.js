@@ -73,6 +73,69 @@ function send(room, socket, type, payload) {
 
 const placement = { requestId: "edit-1", x: 12, y: 16, z: 10, block: 7, orientation: 0, expectedBlock: 0 };
 
+test("appearances broadcast, survive room hibernation and never enter world or backup data", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  const before = await room.getWorldSnapshot(123);
+  const appearance = { ...globalThis.MoneycraftAvatar.defaults, hair: "twintails", hairColor: "lavender", accessory: "cap" };
+  await send(room, one, "player-appearance", appearance);
+  assert.deepEqual(one.messages.at(-1), two.messages.at(-1));
+  assert.deepEqual(two.messages.at(-1), {
+    v: PROTOCOL_VERSION, type: "player-appearance", payload: { playerId: "player-1", appearance },
+  });
+  const restarted = new Room(ctx);
+  assert.deepEqual(restarted.listPlayers().find((player) => player.id === "player-1").appearance, appearance);
+  assert.deepEqual(restarted.listPlayers().find((player) => player.id === "player-2").appearance,
+    globalThis.MoneycraftAvatar.defaults, "pre-upgrade attachments have the default appearance");
+  assert.deepEqual(await restarted.getWorldSnapshot(123), before);
+  const backupResponse = await restarted.fetch(new Request("https://room.internal/internal/backups", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Room-Owner-Token": "a".repeat(32) },
+    body: JSON.stringify({ name: "appearance-isolation" }),
+  }));
+  assert.equal(backupResponse.status, 201);
+  const backup = (await ctx.storage.get("backups"))[0];
+  assert.deepEqual((await restarted.readBackupSnapshot(backup)).world, before.world);
+  assert.equal(Object.hasOwn(backup, "appearance"), false);
+  await send(restarted, one, "player-state", { x: 11, y: 16, z: 10, yaw: 0.4, pitch: 0 });
+  assert.equal(two.messages.at(-1).type, "player-state");
+  assert.equal(Object.hasOwn(two.messages.at(-1).payload, "appearance"), false);
+  assert.deepEqual(one.deserializeAttachment().appearance, appearance);
+});
+
+test("invalid appearances and previous protocols cannot change or broadcast an appearance", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  const appearance = { ...globalThis.MoneycraftAvatar.defaults };
+  await send(room, one, "player-appearance", appearance);
+  two.messages.length = 0;
+  for (const invalid of [null, [], { ...appearance, version: 2 },
+    { ...appearance, image: "external-image" }, { ...appearance, style: "voxel" },
+    { ...appearance, hair: "unknown" }, { ...appearance, top: "#ffffff" }]) {
+    await send(room, one, "player-appearance", invalid);
+    assert.equal(one.messages.at(-1).payload.code, "invalid_message");
+    assert.deepEqual(one.deserializeAttachment().appearance, appearance);
+  }
+  await room.webSocketMessage(one, JSON.stringify({ v: 10, type: "player-appearance", payload: appearance }));
+  assert.equal(one.messages.at(-1).payload.code, "invalid_message");
+  assert.equal(two.messages.length, 0);
+});
+
+test("appearance updates share the bounded player-message rate budget", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  const attachment = one.deserializeAttachment();
+  attachment.messageCount = 20;
+  one.serializeAttachment(attachment);
+  await send(room, one, "player-appearance", globalThis.MoneycraftAvatar.defaults);
+  assert.equal(one.messages.at(-1).payload.code, "rate_limited");
+  assert.equal(two.messages.length, 0);
+  assert.equal(one.deserializeAttachment().appearance, undefined);
+});
+
 test("room edits broadcast only after persistence and survive a new Room instance", async () => {
   const { ctx, room } = await setupRoom();
   const one = addPlayer(ctx);
@@ -187,12 +250,12 @@ test("log orientation synchronizes and survives room restart and backup restorat
 test("old protocol edits cannot introduce materials into an incompatible client session", async () => {
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);
-  for (const v of [4, 5, 6, 7, 8, 9]) {
+  for (const v of [4, 5, 6, 7, 8, 9, 10]) {
     await room.webSocketMessage(socket, JSON.stringify({
       v, type: "block-edit", payload: { ...placement, block: 17 },
     }));
   }
-  assert.equal(socket.messages.at(-1).v, 10);
+  assert.equal(socket.messages.at(-1).v, PROTOCOL_VERSION);
   assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
   assert.equal((await ctx.storage.get("world")).revision, 0);
 });
@@ -659,6 +722,8 @@ test("welcome includes the latest full world, and old rooms initialize determini
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);
   await send(room, socket, "block-edit", placement);
+  const appearance = { ...globalThis.MoneycraftAvatar.defaults, hair: "buns", accessory: "glasses" };
+  await send(room, socket, "player-appearance", appearance);
   const OriginalResponse = globalThis.Response;
   globalThis.WebSocketPair = class {
     constructor() { this[0] = new Socket(); this[1] = new Socket(); }
@@ -678,6 +743,9 @@ test("welcome includes the latest full world, and old rooms initialize determini
     assert.equal(welcome.revision, 1);
     assert.deepEqual(welcome.world, (await room.getWorldSnapshot(123)).world);
     assert.equal(welcome.roomCode, "ABCD23");
+    assert.deepEqual(welcome.players.find((player) => player.id === "player-1").appearance, appearance);
+    assert.deepEqual(welcome.player.appearance, globalThis.MoneycraftAvatar.defaults);
+    assert.deepEqual(socket.messages.at(-1).payload.appearance, globalThis.MoneycraftAvatar.defaults);
     while (ctx.sockets.length < 16) {
       const response = await room.fetch(new Request("https://room.internal/connect?code=ABCD23", {
         headers: { Upgrade: "websocket" },

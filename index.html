@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="./style.css">
     <script src="./config.js" defer></script>
     <script src="./world-model.js" defer></script>
+    <script src="./avatar-model.js" defer></script>
     <script src="./vendor/qrcode.js" defer></script>
     <script src="./multiplayer.js" defer></script>
     <script src="./game.js" defer></script>
@@ -28,6 +29,8 @@
         <button class="workspace-tab" id="build-tab" type="button" role="tab" aria-selected="true" aria-controls="build-view" tabindex="0">建築</button>
         <button class="workspace-tab" id="room-tab" type="button" role="tab" aria-selected="false" aria-controls="room-view" tabindex="-1">部屋管理</button>
       </nav>
+      <p class="avatar-entry"><a href="./avatar.html">アバターのアトリエ</a> · 保存した外観を共同建築で共有</p>
+      <p class="avatar-entry" id="avatar-sharing-status" role="status" aria-live="polite"></p>
 
       <section class="workspace-view" id="build-view" role="tabpanel" aria-labelledby="build-tab">
       <section class="intro" aria-labelledby="game-title">
@@ -132,7 +135,7 @@
           <button class="room-button" id="cancel-email-action" type="button">キャンセル</button>
           <span id="email-action-status" role="status" aria-live="polite"></span>
         </div>
-        <p class="multiplayer-note">同じ部屋では建築とプレイヤーの位置を共有します。作品は教員が完全削除するまでサーバーに保存されます。退出後は元のひとり用ワールドに戻ります。</p>
+        <p class="multiplayer-note">同じ部屋では建築とプレイヤーの位置・保存した外観を共有します。作品は教員が完全削除するまでサーバーに保存されます。退出後は元のひとり用ワールドに戻ります。</p>
         <div class="room-details" id="room-details" hidden>
           <div class="room-share">
             <span>作品名</span>

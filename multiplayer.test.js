@@ -11,6 +11,7 @@ function createClient({
   autoJoin = true,
   qrAvailable = true,
   ownerSession = null,
+  savedAppearance = null, appearanceReadFailure = false,
   fetchImpl = async () => { throw new Error("Unexpected request"); },
 } = {}) {
   class Element extends EventTarget {
@@ -28,9 +29,11 @@ function createClient({
   class Socket extends EventTarget {
     static OPEN = 1;
     readyState = 1;
+    sent = [];
     constructor() { super(); sockets.push(this); }
-    send() {
+    send(message) {
       if (this.failSend) throw new Error("Connection failed");
+      this.sent.push(JSON.parse(message));
     }
     close(code, reason) {
       if (code !== 1000 && (code < 3000 || code > 4999)) throw new DOMException("Invalid close code", "InvalidAccessError");
@@ -58,9 +61,16 @@ function createClient({
     createElement: () => new Element(),
   };
   const sessions = new Map(ownerSession ? [["moneycraft-room-owner-v1", JSON.stringify(ownerSession)]] : []);
+  const saved = new Map();
+  if (savedAppearance !== null) saved.set("moneycraft-avatar-prototype-v1",
+    typeof savedAppearance === "string" ? savedAppearance : JSON.stringify(savedAppearance));
   const context = {
     window, document, WebSocket: Socket, CustomEvent, URL,
     fetch: fetchImpl,
+    localStorage: { getItem(key) {
+      if (appearanceReadFailure) throw new Error("Storage unavailable");
+      return saved.get(key) ?? null;
+    } },
     sessionStorage: {
       getItem: (key) => sessions.get(key) ?? null,
       setItem: (key, value) => sessions.set(key, value),
@@ -69,6 +79,8 @@ function createClient({
     console: { error() {}, warn() {} },
   };
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "avatar-model.js"), "utf8"), context);
+  const avatar = context.MoneycraftAvatar;
   if (qrAvailable) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "vendor/qrcode.js"), "utf8"), context);
   }
@@ -85,26 +97,100 @@ function createClient({
     socket.dispatchEvent(event);
   };
   const welcome = () => message({
-    v: 10, type: "welcome", payload: {
-      roomCode: "ABCD23", player: { id: "self", displayName: "Builder" },
+    v: 11, type: "welcome", payload: {
+      roomCode: "ABCD23", player: { id: "self", displayName: "Builder", appearance: avatar.defaults },
       players: [], maxPlayers: 16, world: { version: 1 }, revision: 0,
     },
   });
   const emit = (type, detail) => window.dispatchEvent(new CustomEvent(`moneycraft:${type}`, { detail }));
-  return { socket, sockets, message, welcome, emit, elements, window, sessions };
+  return { socket, sockets, message, welcome, emit, elements, window, sessions, saved, avatar };
 }
 
 test("browser protocol and JSON failures close using permitted application codes", () => {
   for (const [packet, expectedCode] of [
     [{ v: 3, type: "welcome" }, 4002],
-    [{ v: 10, type: "welcome", payload: {} }, 4002],
-    [{ v: 10, type: "player-state", payload: {} }, 4002],
+    [{ v: 10, type: "welcome" }, 4002],
+    [{ v: 11, type: "welcome", payload: {} }, 4002],
+    [{ v: 11, type: "player-state", payload: {} }, 4002],
     ["{invalid", 4007],
   ]) {
     const client = createClient();
     client.message(packet);
     assert.equal(client.socket.closeCode, expectedCode);
     assert.equal(client.elements.get("#room-roster-count").textContent, "0 / 16 人");
+  }
+});
+
+test("saved appearance is sent once on entry, refreshed on return, and resent on reconnect", () => {
+  const client = createClient();
+  const appearance = { ...client.avatar.defaults, hair: "long", hairColor: "rose" };
+  client.saved.set(client.avatar.storageKey, JSON.stringify(appearance));
+  client.welcome();
+  assert.deepEqual(client.socket.sent, [{ v: 11, type: "player-appearance", payload: appearance }]);
+  client.window.dispatchEvent(new Event("focus"));
+  client.window.dispatchEvent(new Event("pageshow"));
+  assert.equal(client.socket.sent.length, 1);
+  const changed = { ...appearance, accessory: "glasses" };
+  client.saved.set(client.avatar.storageKey, JSON.stringify(changed));
+  client.window.dispatchEvent(new Event("focus"));
+  assert.equal(client.socket.sent.length, 2);
+  assert.deepEqual(client.socket.sent.at(-1).payload, changed);
+  client.saved.set(client.avatar.storageKey, JSON.stringify(Object.fromEntries(Object.entries(changed).reverse())));
+  const storage = new Event("storage");
+  storage.key = client.avatar.storageKey;
+  client.window.dispatchEvent(storage);
+  assert.equal(client.socket.sent.length, 2, "key order alone does not resend");
+  client.welcome();
+  assert.equal(client.socket.sent.length, 3, "new welcome forces a fresh appearance send");
+  assert.equal(client.saved.get(client.avatar.storageKey), JSON.stringify(Object.fromEntries(Object.entries(changed).reverse())));
+});
+
+test("bad or unavailable saved appearances report default use without overwriting data", () => {
+  for (const options of [{ savedAppearance: "{bad" }, { savedAppearance: "{}" }, { appearanceReadFailure: true }]) {
+    const client = createClient(options);
+    const before = new Map(client.saved);
+    client.welcome();
+    assert.deepEqual(client.socket.sent.at(-1).payload, JSON.parse(JSON.stringify(client.avatar.defaults)));
+    assert.match(client.elements.get("#avatar-sharing-status").textContent, /既定.*元の保存データ/);
+    assert.deepEqual(client.saved, before);
+    client.socket.failSend = true;
+    client.welcome();
+    assert.equal(client.socket.closeCode, 4011);
+    assert.match(client.elements.get("#avatar-sharing-status").textContent, /送信できません/);
+  }
+});
+
+test("appearance changes update roster metadata used to restore timed-out renderers", () => {
+  const client = createClient();
+  client.welcome();
+  const appearance = JSON.parse(JSON.stringify(client.avatar.defaults));
+  client.message({ v: 11, type: "player-joined", payload: { id: "other", displayName: "Other", appearance } });
+  const changed = { ...appearance, hair: "buns" };
+  let state;
+  client.window.addEventListener("moneycraft:player-state", (event) => { state = event.detail; });
+  client.message({ v: 11, type: "player-appearance", payload: { playerId: "other", appearance: changed } });
+  client.message({ v: 11, type: "player-state", payload: {
+    playerId: "other", state: { x: 1, y: 1, z: 1, yaw: 0, pitch: 0 },
+  } });
+  assert.deepEqual(JSON.parse(JSON.stringify(state.appearance)), changed);
+  assert.equal(state.displayName, "Other");
+  assert.equal(client.socket.closeCode, undefined);
+  client.message({ v: 11, type: "player-appearance", payload: {
+    playerId: "other", appearance: { ...changed, image: "invalid" },
+  } });
+  assert.equal(client.socket.closeCode, 4002);
+});
+
+test("invalid appearance in a welcome or join is explicitly rejected", () => {
+  for (const type of ["welcome", "player-joined"]) {
+    const client = createClient();
+    client.welcome();
+    const player = { id: "other", displayName: "Other", appearance: { ...client.avatar.defaults, style: "voxel" } };
+    client.message({ v: 11, type, payload: type === "welcome"
+      ? { roomCode: "ABCD23", player: { id: "self", displayName: "Builder", appearance: client.avatar.defaults },
+        players: [player], maxPlayers: 16, world: {}, revision: 0 }
+      : player });
+    assert.equal(client.socket.closeCode, 4002);
   }
 });
 
@@ -169,7 +255,8 @@ test("room invitations contain only the room code and preserve the site path", (
   assert.match(image.src, /^data:image\/gif;base64,/);
   assert.match(image.alt, /ABCD23/);
   const original = image.src;
-  client.message({ v: 10, type: "player-joined", payload: { id: "other", displayName: "Other" } });
+  client.message({ v: 11, type: "player-joined",
+    payload: { id: "other", displayName: "Other", appearance: client.avatar.defaults } });
   assert.equal(image.src, original);
 });
 

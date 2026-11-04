@@ -55,8 +55,39 @@
   let currentWorkName = "新しい作品";
   let currentBackups = [];
   let activePlayerCount = 0;
-  const PROTOCOL_VERSION = 10;
+  const PROTOCOL_VERSION = 11;
   const players = new Map();
+  const avatar = globalThis.MoneycraftAvatar;
+  const avatarSharingStatus = document.querySelector("#avatar-sharing-status");
+  let sentAppearance = "";
+
+  function refreshSavedAppearance(force = false) {
+    let appearance = { ...avatar.defaults };
+    try {
+      const saved = localStorage.getItem(avatar.storageKey);
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (!avatar.isAppearance(parsed)) throw new Error("Invalid saved avatar appearance.");
+        appearance = parsed;
+      }
+      avatarSharingStatus.textContent = saved === null
+        ? "保存した外観がないため、共同建築では既定の外観を使用します。"
+        : "保存した外観を共同建築で使用します。未保存の編集は反映しません。";
+    } catch (error) {
+      console.error("Could not load the saved avatar appearance.", error);
+      avatarSharingStatus.textContent = "保存した外観を読み込めないため、既定の外観を使用します。元の保存データは変更していません。";
+    }
+    if (!worldReady || !activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
+    const serialized = JSON.stringify(appearance, Object.keys(avatar.defaults));
+    if (!force && serialized === sentAppearance) return;
+    sendWorldMessage("player-appearance", appearance);
+    if (activeSocket?.readyState === WebSocket.OPEN) sentAppearance = serialized;
+  }
+
+  function isAppearancePlayer(player) {
+    return player && typeof player.id === "string" && typeof player.displayName === "string"
+      && avatar.isAppearance(player.appearance);
+  }
 
   function selectWorkspaceTab(tabName, focus = false) {
     const showBuild = tabName === "build";
@@ -219,9 +250,12 @@
       activeSocket.send(JSON.stringify({ v: PROTOCOL_VERSION, type, payload }));
     } catch (error) {
       console.error("Could not send a shared world message.", error);
-      setStatus("建築の変更を送信できませんでした。再参加してください。", "error");
+      const appearanceFailed = type === "player-appearance";
+      setStatus(appearanceFailed ? "外観を送信できませんでした。再参加してください。"
+        : "建築の変更を送信できませんでした。再参加してください。", "error");
+      if (appearanceFailed) avatarSharingStatus.textContent = "外観を送信できませんでした。部屋へ再参加してください。";
       activeSocket.close(4011, "World message delivery failed");
-      emitRoomEvent("world-send-failed", payload);
+      if (!appearanceFailed) emitRoomEvent("world-send-failed", payload);
     }
   }
 
@@ -237,7 +271,8 @@
       const welcome = packet.payload;
       if (!welcome || welcome.roomCode !== currentRoomCode
         || !welcome.player || typeof welcome.player.id !== "string"
-        || typeof welcome.player.displayName !== "string" || !Array.isArray(welcome.players)
+        || !isAppearancePlayer(welcome.player) || !Array.isArray(welcome.players)
+        || !welcome.players.every(isAppearancePlayer)
         || !welcome.world || !Number.isSafeInteger(welcome.revision) || welcome.revision < 0) {
         setStatus("部屋の初期状態を読み込めませんでした。", "error");
         socket.close(4002, "Invalid welcome message");
@@ -255,6 +290,7 @@
       setStatus(`「${welcome.player.displayName}」として入室しました。`, "connected");
       worldReady = true;
       emitRoomEvent("room-joined", welcome);
+      refreshSavedAppearance(true);
       if (isRoomOwner) loadWorkManagement();
       return;
     }
@@ -280,12 +316,30 @@
       return;
     }
 
-    if (packet.type === "player-joined" && packet.payload?.id && packet.payload?.displayName) {
+    if (packet.type === "player-joined") {
+      if (!isAppearancePlayer(packet.payload)) {
+        setStatus("プレイヤー外観の通信形式が正しくありません。", "error");
+        socket.close(4002, "Invalid player appearance");
+        return;
+      }
       players.set(packet.payload.id, packet.payload);
       activePlayerCount = players.size;
       updateRoomDetails();
       setStatus(`${packet.payload.displayName} が参加しました。`, "connected");
       emitRoomEvent("player-joined", packet.payload);
+      return;
+    }
+
+    if (packet.type === "player-appearance") {
+      const update = packet.payload;
+      const player = players.get(update?.playerId);
+      if (!player || !avatar.isAppearance(update.appearance)) {
+        setStatus("プレイヤー外観の通信形式が正しくありません。", "error");
+        socket.close(4002, "Invalid player appearance");
+        return;
+      }
+      player.appearance = update.appearance;
+      emitRoomEvent("player-appearance", update);
       return;
     }
 
@@ -311,6 +365,7 @@
       emitRoomEvent("player-state", {
         ...update,
         displayName: players.get(update.playerId)?.displayName || update.displayName,
+        appearance: players.get(update.playerId)?.appearance,
       });
       return;
     }
@@ -834,6 +889,12 @@
   roomTab.addEventListener("keydown", handleWorkspaceTabKeydown);
   selectWorkspaceTab("build");
   window.addEventListener("moneycraft:send-player-state", sendPlayerState);
+  window.addEventListener("focus", () => refreshSavedAppearance());
+  window.addEventListener("pageshow", () => refreshSavedAppearance());
+  window.addEventListener("storage", (event) => {
+    if (event.key === avatar.storageKey || event.key === null) refreshSavedAppearance();
+  });
+  refreshSavedAppearance();
   window.addEventListener("moneycraft:send-block-edit", (event) => sendWorldMessage("block-edit", event.detail));
   window.addEventListener("moneycraft:request-world", () => sendWorldMessage("world-request", null));
   window.addEventListener("moneycraft:world-protocol-error", () => {

@@ -23,6 +23,68 @@ file server.
 Use the **建築** and **部屋管理** tabs to switch between the game and
 multiplayer room controls. Invitation links open the room-management tab.
 
+## Avatar editor prototype
+
+The standalone prototype is complete. The game now displays each remote player's
+saved appearance using the soft-doll model. Feet placement, movement-facing
+direction and overhead names follow the existing player state; collision and
+first-person view are unchanged. Movement-linked animations are not connected yet.
+Soft-doll is the selected standard for the game. Voxel remains an atelier-only
+comparison, not a saved or shared game style. See the staged integration plan in
+[ROADMAP.md](./ROADMAP.md).
+
+Open [avatar.html](./avatar.html), or follow **アバターのアトリエ**
+from the game. `node dev-server.js` serves the editor at
+`http://127.0.0.1:49179/avatar.html` alongside the game.
+
+- A fixed, clothed block-style body and face; no body-size or facial editing.
+- **ボクセル風 / ソフトドール風** switches the comparison preview between
+  the original box model and a bevelled low-poly doll with slimmer limbs,
+  mitten-like hands and a gently tapered torso. Hair, colors, clothing and
+  accessories share the same choices and six-joint animation structure.
+  Soft-doll arms and shoulder pivots sit closer to the torso, without separate
+  projecting shoulder blocks; voxel proportions and pivots remain unchanged.
+  The comparison style is not saved and resets to voxel on reload; changing it
+  does not alter appearance choices or mark a saved appearance as edited.
+- Eight hair choices (including none): short, bob, crop, long, ponytail, twintails
+  and buns, with eleven hair colors. All hairstyles are available to everyone.
+  Three clothing patterns and four accessory
+  choices (including none), with finite palettes for skin, hair, clothing and accents.
+  Accessories occupy one slot. There are no text, image-upload, free-paint or
+  arbitrary-geometry inputs.
+- Drag the WebGL preview to rotate it, or use keyboard-accessible rotation,
+  elevation and zoom sliders. **正面から見る** resets the view only.
+- **動きをためす** offers in-place walking, a one-arm greeting wave and
+  left/right/up/down head movement. Pause/resume freezes the current pose;
+  **静止姿勢に戻す** resets it. Motions start only when selected, are not saved
+  with appearance, and pause when the page becomes hidden (resume explicitly).
+  Hair, eyes, glasses and caps follow the head; scarves follow the torso.
+  These are rigid-joint previews in either style, not hair physics or collision-aware animation.
+- **この姿を保存** explicitly writes validated, versioned choices to
+  `moneycraft-avatar-prototype-v1` in this browser. Changes are not autosaved.
+  **保存した姿に戻す** discards the draft; **初期の組合せに戻す** changes
+  the draft without overwriting the saved appearance.
+- The game reads only explicitly saved choices on entry and refreshes them on
+  focus, page return or a cross-tab storage change. Unsaved drafts and comparison
+  styles are never shared. Missing saves use the default; invalid or unavailable
+  storage reports default use without overwriting the old data.
+- Protocol **v11** sends `player-appearance` on entry or a saved change, not with
+  every position packet. The Worker uses the same finite-ID, exact-key v1
+  validator as the editor. Accepted appearances live in connection attachments,
+  appear in welcome/roster messages for late joiners, and survive Worker
+  hibernation. Rejoining sends the browser's saved choices again. They are not
+  stored in world snapshots or backups. Appearance updates share the existing
+  20-per-second player-message limit with positions; malformed data is rejected.
+  Custom meshes rebuild only when choices change and are released with their
+  remote-player state. Names follow the chosen hair/headwear height.
+  Synchronized animation and cosmetic-unlock permissions remain future work.
+  Additional accessories are planned as in-game unlocks; the basic skin editor
+  remains bounded rather than adding arbitrary customization.
+
+The bounded appearance schema and model geometry live in `avatar-model.js`;
+`avatar-editor.js` owns the independent UI, local persistence and preview renderer.
+Run its focused checks with `node --test avatar.test.js`.
+
 ## Controls
 
 - Click the game to capture the mouse; move the mouse to look around
@@ -269,7 +331,7 @@ No DNS or MX change is required. This repository does not contain deployment
 secrets, and no mail is sent by the test suite.
 
 Run the focused tests with
-`node --test world-model.test.js game.test.js multiplayer.test.js src/protocol.test.js src/room.test.js src/worker.test.js src/recovery-mailer.test.js`.
+`node --test world-model.test.js game.test.js avatar.test.js multiplayer.test.js src/protocol.test.js src/room.test.js src/worker.test.js src/recovery-mailer.test.js`.
 
 Run `wrangler dev --ip 127.0.0.1 --port 49180` and `node dev-server.js` in separate terminals
 to test the room service and game locally. The page is available at
@@ -284,6 +346,11 @@ The published client currently connects to
 `https://moneycraft-realtime.pitagoramin-shizuoka.workers.dev`. The Worker uses
 Cloudflare Durable Objects for room state; local Durable Object storage is for
 development only. The client and Worker are deployed separately.
+
+The 2026-11-04 avatar-sharing release uses protocol **v11**.
+Publish the matching Worker before the static client, then reload all
+participants; v10 and v11 clients cannot share a session.
+World snapshot format v2 and the existing atelier appearance v1 remain unchanged.
 
 The cooperative-building release is published on GitHub Pages and the Worker
 as of 2026-11-01. Production checks confirmed shared edits, conflict rejection,

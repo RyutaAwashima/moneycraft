@@ -1,6 +1,8 @@
 import "../world-model.js";
+import "../avatar-model.js";
 
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
+export const isPlayerAppearancePayload = globalThis.MoneycraftAvatar.isAppearance;
 export const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
 export const MAX_PLAYERS_PER_ROOM = 16;
 export const WORLD_DIMENSIONS = globalThis.MoneycraftWorld.defaultOptions;

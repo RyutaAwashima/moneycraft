@@ -8,6 +8,7 @@ import {
   ROOM_CODE_PATTERN,
   WORLD_DIMENSIONS,
   isPlayerStatePayload,
+  isPlayerAppearancePayload,
   isBlockEditPayload,
 } from "./protocol.js";
 
@@ -26,7 +27,20 @@ test("player states must be finite and inside world bounds", () => {
   assert.equal(isPlayerStatePayload({ ...valid, y: Number.NaN }), false);
   assert.equal(isPlayerStatePayload({ ...valid, pitch: 2 }), false);
   assert.equal(isPlayerStatePayload(null), false);
-  assert.equal(PROTOCOL_VERSION, 10);
+  assert.equal(PROTOCOL_VERSION, 11);
+});
+
+test("shared appearances use the exact finite version-one atelier schema", () => {
+  const avatar = globalThis.MoneycraftAvatar;
+  assert.equal(isPlayerAppearancePayload, avatar.isAppearance);
+  for (const [field, entries] of Object.entries(avatar.options)) for (const entry of entries) {
+    assert.equal(isPlayerAppearancePayload({ ...avatar.defaults, [field]: entry.id }), true);
+  }
+  for (const value of [null, [], { ...avatar.defaults, version: 2 },
+    { ...avatar.defaults, style: "voxel" }, { ...avatar.defaults, image: "https://example.test/x" },
+    { ...avatar.defaults, hair: "unknown" }, { ...avatar.defaults, skin: "#ffffff" }]) {
+    assert.equal(isPlayerAppearancePayload(value), false);
+  }
 });
 
 test("block edits validate identifiers, bounds and compare-and-set operations", () => {

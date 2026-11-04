@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#172b25">
+    <meta name="referrer" content="no-referrer">
+    <title>アバターのアトリエ — Moneycraft</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="stylesheet" href="./avatar.css">
+    <script src="./avatar-model.js" defer></script>
+    <script src="./avatar-editor.js" defer></script>
+  </head>
+  <body>
+    <main class="page avatar-page">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="Moneycraft 建築へ戻る"><span class="brand-mark" aria-hidden="true">M</span><span>moneycraft</span></a>
+        <a class="avatar-back" href="./">建築へ戻る</a>
+      </header>
+      <section class="avatar-intro" aria-labelledby="avatar-title">
+        <div><p class="eyebrow">MY LITTLE IDENTITY</p><h1 id="avatar-title">アバターのアトリエ</h1>
+          <p>みんなと過ごす世界の、自分らしい姿を。</p></div>
+        <span class="avatar-prototype">PROTOTYPE · 試作</span>
+      </section>
+      <p class="avatar-boundary">体格と顔の基本形は共通です。用意した髪型・服・装飾と配色を組み合わせます。画像の取込や自由描画はできません。</p>
+      <div class="avatar-layout">
+        <section class="avatar-preview" aria-labelledby="preview-title">
+          <div class="avatar-section-heading"><h2 id="preview-title">3Dプレビュー</h2><span>共通の外観 / 2つの表現</span></div>
+          <fieldset class="avatar-style-controls">
+            <legend>表現スタイルを比較</legend>
+            <div class="avatar-choices">
+              <button type="button" class="avatar-choice" id="avatar-style-voxel" aria-pressed="true">ボクセル風</button>
+              <button type="button" class="avatar-choice" id="avatar-style-soft-doll" aria-pressed="false">ソフトドール風</button>
+            </div>
+            <p>髪型・色・装飾は共通です。切替は比較表示だけで、外観には保存されません。</p>
+          </fieldset>
+          <div class="avatar-stage">
+            <canvas id="avatar-preview" width="600" height="640" aria-label="編集中の3Dアバター。ドラッグで回転。下のスライダーでも操作できます。">
+              3DプレビューにはWebGL対応ブラウザーが必要です。
+            </canvas>
+            <span class="avatar-stage-note" aria-hidden="true">ドラッグして、ぐるっと確認</span>
+          </div>
+          <div class="avatar-view-controls">
+            <label for="avatar-yaw">回転 <output id="avatar-yaw-value">20°</output></label>
+            <input id="avatar-yaw" type="range" min="-180" max="180" step="1" value="20">
+            <label for="avatar-pitch">見下ろし <output id="avatar-pitch-value">10°</output></label>
+            <input id="avatar-pitch" type="range" min="-20" max="35" step="1" value="10">
+            <label for="avatar-zoom">拡大 <output id="avatar-zoom-value">100%</output></label>
+            <input id="avatar-zoom" type="range" min="80" max="120" step="5" value="100">
+            <button type="button" class="reset-button" id="avatar-front">正面から見る</button>
+          </div>
+          <section class="avatar-motion-controls" aria-labelledby="avatar-motion-title">
+            <h3 id="avatar-motion-title">動きをためす</h3>
+            <div class="avatar-choices" role="group" aria-label="アニメーションの種類">
+              <button type="button" class="avatar-choice" id="avatar-motion-still" aria-pressed="true">静止</button>
+              <button type="button" class="avatar-choice" id="avatar-motion-walk" aria-pressed="false">歩く</button>
+              <button type="button" class="avatar-choice" id="avatar-motion-wave" aria-pressed="false">手を振る</button>
+              <button type="button" class="avatar-choice" id="avatar-motion-look" aria-pressed="false">見回す</button>
+            </div>
+            <div class="avatar-motion-actions">
+              <button type="button" class="reset-button" id="avatar-motion-pause" disabled>一時停止</button>
+              <button type="button" class="reset-button" id="avatar-motion-reset">静止姿勢に戻す</button>
+            </div>
+            <output id="avatar-motion-status" role="status" aria-live="polite">静止中</output>
+            <p>動きは試作画面だけの表示です。外観には保存されません。ページが非表示になると一時停止します。</p>
+          </section>
+        </section>
+        <section class="avatar-customize" aria-labelledby="customize-title">
+          <div class="avatar-section-heading"><h2 id="customize-title">見た目をととのえる</h2><span>決められたパーツから選ぶ</span></div>
+          <div id="avatar-controls"></div>
+        </section>
+      </div>
+      <section class="avatar-save-panel" aria-label="試作データの保存">
+        <div><strong id="avatar-dirty">未保存の試作</strong>
+          <p>このブラウザーに保存した外観を、共同建築でほかの参加者へ表示します。ゲームではソフトドール風を使用します。未保存の編集や比較スタイルは反映されません。</p>
+          <output id="avatar-status" role="status" aria-live="polite"></output>
+        </div>
+        <div class="avatar-save-actions">
+          <button type="button" class="reset-button" id="avatar-defaults">初期の組合せに戻す</button>
+          <button type="button" class="reset-button" id="avatar-discard">保存した姿に戻す</button>
+          <button type="button" class="room-button room-create" id="avatar-save">この姿を保存</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
