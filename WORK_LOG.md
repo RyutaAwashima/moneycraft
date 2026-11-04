@@ -1034,3 +1034,9 @@
   通信v12 Workerを先行デプロイ。version ID: `5b539b43-99af-4da1-ad90-5a613b713fe1`。
   続いて対応するPagesを更新し、配信内容・接続を検証する。全員のページ再読込が必要。
   外観v1・ワールド保存v2は維持。実端末通常操作・16人負荷・連続動作の目視確認は残る。
+- 実装を`9be2401`へコミットしたが、GitHubのInternal Server Errorでpushが拒否された。
+  リモートが`2e35556`のままであることを確認し、一度だけ再試行したが同じエラーで失敗。
+  利用者へ確認し、公開を中断してWorkerを直前のv11へ戻す方針となった。
+  `wrangler rollback`で`757aea77-54a1-4312-b7e6-c20cd752590c`を100%へ復元。
+  本番healthのprotocolVersion 11、配信クライアントのPROTOCOL_VERSION 11、origin/main未変更を確認した。
+  Pagesは更新されていない。実装コミットは保持し、GitHub復旧後に公開を再開する。

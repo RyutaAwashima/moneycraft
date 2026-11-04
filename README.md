@@ -385,8 +385,11 @@ The published client currently connects to
 Cloudflare Durable Objects for room state; local Durable Object storage is for
 development only. The client and Worker are deployed separately.
 
-The 2026-11-04 third-person and animation-sharing release uses protocol **v12**,
-replacing the earlier v11 avatar-sharing release.
+The published avatar-sharing release uses protocol **v11**.
+The prepared third-person and animation-sharing release requires **v12**.
+Its 2026-11-04 publication was interrupted by GitHub push errors; the Worker
+was rolled back to v11 to match the unchanged public client. The v12 changes
+are committed locally and have not been published.
 Publish the matching Worker before the static client, then reload all
 participants; v11 and v12 clients cannot share a session. Do not publish just
 one side of the change. Older attached position states are explicitly discarded
