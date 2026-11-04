@@ -1040,3 +1040,21 @@
   `wrangler rollback`で`757aea77-54a1-4312-b7e6-c20cd752590c`を100%へ復元。
   本番healthのprotocolVersion 11、配信クライアントのPROTOCOL_VERSION 11、origin/main未変更を確認した。
   Pagesは更新されていない。実装コミットは保持し、GitHub復旧後に公開を再開する。
+
+## 2026-11-04 — 三人称・アニメーション共有の公開完了
+
+- 利用者依頼で公開を再開。origin/mainはローカル先行2コミットから遅れていたため、状態を確認してpush。
+  以前のInternal Server Errorは再発せず、`9be2401`と復旧記録`f28a1cc`を含むmain更新が成功した。
+- Pages run `41828742678`はsuccess。主要7ファイル（index、game、multiplayer、avatar model/editor/html、CSS）
+  の本番SHA-256がローカルと一致。Workerを先にprotocol v12へデプロイし、version IDは
+  `f8af4b69-c8bf-4636-9ace-cedd0fe1e3b0`。本番healthは`{"ok":true,"protocolVersion":12}`。
+- 公開ゲームを2クライアントで開き、検証専用部屋へ入退室。既存のユーザー保存を守るため検証ブラウザーだけで
+  ワールド／部屋セッションへのStorage書込みを一時抑止し、終了時に元へ復元した。
+  Worker経由でgrounded／rising／falling／flyingの4状態が相手へ届くこと、両クライアントのWebGLエラー0を確認。
+  専用の検証部屋はowner endpointで削除。共有ワールドへの建築変更は行わない。
+- ブラウザーでは実画面の後方三人称切替を確認。通常キー入力の連続歩行を目視確認するには片方のタブが非表示で、
+  ブラウザーの描画間引きにより同期姿勢の継続確認はできなかった。自動テストで共有動作を確認済み。
+  実タッチ端末・16人負荷も未確認であり、公開後の追加検証事項とする。
+- Pagesの更新に合わせ、README・ROADMAP・PROGRESSをv12公開済みへ更新。
+  今回の完了記録を含む追加文書コミットを作成してpushし、その後Pagesの更新も確認する。
+  全参加者はv11クライアントから更新するため再読込が必要。
