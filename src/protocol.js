@@ -1,7 +1,7 @@
 import "../world-model.js";
 import "../avatar-model.js";
 
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 export const isPlayerAppearancePayload = globalThis.MoneycraftAvatar.isAppearance;
 export const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
 export const MAX_PLAYERS_PER_ROOM = 16;
@@ -31,6 +31,9 @@ export function isBlockEditPayload(payload, dimensions = WORLD_DIMENSIONS) {
 export function isPlayerStatePayload(payload, dimensions = WORLD_DIMENSIONS) {
   return payload !== null
     && typeof payload === "object"
+    && !Array.isArray(payload)
+    && Object.keys(payload).length === 6
+    && globalThis.MoneycraftAvatar.locomotionStates.includes(payload.locomotion)
     && Number.isFinite(payload.x)
     && payload.x >= 0
     && payload.x <= dimensions.width

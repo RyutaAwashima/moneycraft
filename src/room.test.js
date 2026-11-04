@@ -47,7 +47,7 @@ function createContext() {
   };
 }
 
-function addPlayer(ctx, id = "player-1", state = { x: 10.5, y: 16, z: 10.5, yaw: 0, pitch: 0 }) {
+function addPlayer(ctx, id = "player-1", state = { x: 10.5, y: 16, z: 10.5, yaw: 0, pitch: 0, locomotion: "grounded" }) {
   const socket = new Socket();
   socket.serializeAttachment({
     id, displayName: id, state, messageWindowStart: Date.now(), messageCount: 0, editCount: 0,
@@ -72,6 +72,31 @@ function send(room, socket, type, payload) {
 }
 
 const placement = { requestId: "edit-1", x: 12, y: 16, z: 10, block: 7, orientation: 0, expectedBlock: 0 };
+
+test("validated locomotion broadcasts, survives hibernation and rejects invalid or old state packets", async () => {
+  const { ctx, room } = await setupRoom();
+  const one = addPlayer(ctx);
+  const two = addPlayer(ctx, "player-2");
+  const before = await room.getWorldSnapshot(123);
+  const state = { x: 10.5, y: 16, z: 10.5, yaw: 0, pitch: -0.5, locomotion: "flying" };
+  for (const locomotion of globalThis.MoneycraftAvatar.locomotionStates) {
+    await send(room, one, "player-state", { ...state, locomotion });
+    assert.deepEqual(two.messages.at(-1).payload.state, { ...state, locomotion });
+  }
+  const restarted = new Room(ctx);
+  assert.deepEqual(restarted.listPlayers().find(p => p.id === "player-1").state, state);
+  two.messages.length = 0;
+  for (const invalid of [{ ...state, locomotion: "walk" }, { ...state, locomotion: undefined },
+    { ...state, pose: [] }]) {
+    await send(restarted, one, "player-state", invalid);
+    assert.equal(one.messages.at(-1).payload.code, "invalid_message");
+    assert.deepEqual(one.deserializeAttachment().state, state);
+  }
+  await restarted.webSocketMessage(one, JSON.stringify({ v: 11, type: "player-state", payload: state }));
+  assert.equal(one.messages.at(-1).payload.code, "invalid_message");
+  assert.equal(two.messages.length, 0);
+  assert.deepEqual(await restarted.getWorldSnapshot(123), before);
+});
 
 test("appearances broadcast, survive room hibernation and never enter world or backup data", async () => {
   const { ctx, room } = await setupRoom();
@@ -98,7 +123,7 @@ test("appearances broadcast, survive room hibernation and never enter world or b
   const backup = (await ctx.storage.get("backups"))[0];
   assert.deepEqual((await restarted.readBackupSnapshot(backup)).world, before.world);
   assert.equal(Object.hasOwn(backup, "appearance"), false);
-  await send(restarted, one, "player-state", { x: 11, y: 16, z: 10, yaw: 0.4, pitch: 0 });
+  await send(restarted, one, "player-state", { x: 11, y: 16, z: 10, yaw: 0.4, pitch: 0, locomotion: "grounded" });
   assert.equal(two.messages.at(-1).type, "player-state");
   assert.equal(Object.hasOwn(two.messages.at(-1).payload, "appearance"), false);
   assert.deepEqual(one.deserializeAttachment().appearance, appearance);
@@ -263,7 +288,7 @@ test("old protocol edits cannot introduce materials into an incompatible client 
 test("server placement collision uses the slab's solid half and rejects overlaps and rotations", async () => {
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);
-  const other = addPlayer(ctx, "on-slab", { x: 12.5, y: 16.5, z: 10.5, yaw: 0, pitch: 0 });
+  const other = addPlayer(ctx, "on-slab", { x: 12.5, y: 16.5, z: 10.5, yaw: 0, pitch: 0, locomotion: "grounded" });
   await send(room, socket, "block-edit", { ...placement, block: 16, orientation: 1 });
   assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
   await send(room, socket, "block-edit", { ...placement, block: 16 });
@@ -321,7 +346,7 @@ test("upper slabs and merged planks persist through restart and backup with orie
 test("server permits empty lower-half clearance but rejects a merge that fills a player", async () => {
   const { ctx, room } = await setupRoom();
   const one = addPlayer(ctx);
-  const lower = { x: 12.5, y: 14.8, z: 10.5, yaw: 0, pitch: 0 };
+  const lower = { x: 12.5, y: 14.8, z: 10.5, yaw: 0, pitch: 0, locomotion: "grounded" };
   addPlayer(ctx, "under-slab", lower);
   await send(room, one, "block-edit", { ...placement, block: 16, orientation: 20 });
   assert.equal(one.messages.at(-1).type, "block-changed");
@@ -335,7 +360,7 @@ test("server permits empty lower-half clearance but rejects a merge that fills a
 test("server stair placement tests the oriented solid union rather than the enclosing cube", async () => {
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);
-  addPlayer(ctx, "on-low-tread", { x: 12.5, y: 16.5, z: 10.2, yaw: 0, pitch: 0 });
+  addPlayer(ctx, "on-low-tread", { x: 12.5, y: 16.5, z: 10.2, yaw: 0, pitch: 0, locomotion: "grounded" });
   const api = globalThis.MoneycraftWorld;
   const forward = api.orientationFromFacing([0, 0, 1]);
   const reverse = api.orientationFromFacing([0, 0, -1]);
@@ -354,7 +379,7 @@ test("server stair placement tests the oriented solid union rather than the encl
 test("server inverted stairs allow the lower recess but reject a solid lower step", async () => {
   const { ctx, room } = await setupRoom();
   const socket = addPlayer(ctx);
-  addPlayer(ctx, "under-stair", { x: 12.5, y: 14.8, z: 10.2, yaw: 0, pitch: 0 });
+  addPlayer(ctx, "under-stair", { x: 12.5, y: 14.8, z: 10.2, yaw: 0, pitch: 0, locomotion: "grounded" });
   const api = globalThis.MoneycraftWorld;
   await send(room, socket, "block-edit", {
     ...placement, block: 17, orientation: api.orientationFromFacing([0, 0, 1], true),
@@ -410,7 +435,7 @@ test("corner-expanding removal is rejected around other players and succeeds whe
   await send(room, socket, "block-edit", { ...placement, block: 17, orientation: forward });
   await send(room, socket, "block-edit", { ...placement, z: 11, block: 17, orientation: turn });
   assert.equal((await room.getWorldSnapshot(123)).revision, 2);
-  const remote = addPlayer(ctx, "in-corner-recess", { x: 11.85, y: 16.5, z: 10.85, yaw: 0, pitch: 0 });
+  const remote = addPlayer(ctx, "in-corner-recess", { x: 11.85, y: 16.5, z: 10.85, yaw: 0, pitch: 0, locomotion: "grounded" });
   const remove = { ...placement, z: 11, block: 0, expectedBlock: 17 };
   await send(room, socket, "block-edit", remove);
   assert.equal(socket.messages.at(-1).payload.code, "player_in_block");
@@ -432,7 +457,7 @@ test("server placement uses the proposed outer corner rather than an unconnected
   await send(room, socket, "block-edit", {
     ...placement, z: 11, block: 17, orientation: api.orientationFromFacing([1, 0, 0], true),
   });
-  addPlayer(ctx, "under-outer-corner", { x: 11.85, y: 14.8, z: 10.85, yaw: 0, pitch: 0 });
+  addPlayer(ctx, "under-outer-corner", { x: 11.85, y: 14.8, z: 10.85, yaw: 0, pitch: 0, locomotion: "grounded" });
   await send(room, socket, "block-edit", {
     ...placement, block: 17, orientation: api.orientationFromFacing([0, 0, 1], true),
   });
@@ -448,7 +473,7 @@ test("new stairs reject indirect inner-corner growth into a player, including in
     await send(room, socket, "block-edit", {
       ...placement, block: 17, orientation: api.orientationFromFacing([0, 0, 1], inverted),
     });
-    addPlayer(ctx, "beside-new-stair", { x: 12.85, y: inverted ? 14.8 : 16.5, z: 10.15, yaw: 0, pitch: 0 });
+    addPlayer(ctx, "beside-new-stair", { x: 12.85, y: inverted ? 14.8 : 16.5, z: 10.15, yaw: 0, pitch: 0, locomotion: "grounded" });
     await send(room, socket, "block-edit", {
       ...placement, z: 9, block: 17, orientation: api.orientationFromFacing([1, 0, 0], inverted),
     });
@@ -507,7 +532,7 @@ test("invalid, distant and player-overlapping edits cannot mutate the world", as
   assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
   await send(room, socket, "block-edit", { ...placement, x: 30 });
   assert.equal(socket.messages.at(-1).payload.code, "out_of_reach");
-  addPlayer(ctx, "player-2", { x: 12.5, y: 16, z: 10.5, yaw: 0, pitch: 0 });
+  addPlayer(ctx, "player-2", { x: 12.5, y: 16, z: 10.5, yaw: 0, pitch: 0, locomotion: "grounded" });
   await send(room, socket, "block-edit", placement);
   assert.equal(socket.messages.at(-1).payload.code, "player_in_block");
   assert.equal((await ctx.storage.get("world")).revision, 0);
@@ -804,7 +829,7 @@ test("legacy saved rooms preserve dimensions and buildings through transactional
   await ctx.storage.put("world", oldSnapshot);
   assert.deepEqual(await room.getWorldSnapshot(123), oldSnapshot);
   const socket = addPlayer(ctx);
-  await send(room, socket, "player-state", { x: 50, y: 16, z: 10, yaw: 0, pitch: 0 });
+  await send(room, socket, "player-state", { x: 50, y: 16, z: 10, yaw: 0, pitch: 0, locomotion: "grounded" });
   assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
   await send(room, socket, "block-edit", { ...placement, x: 40 });
   assert.equal(socket.messages.at(-1).payload.code, "invalid_message");
@@ -886,7 +911,7 @@ test("version-one backups restore with default orientation and version-two stora
 
 test("large-room edge edits persist only the changed part and metadata", async () => {
   const { ctx, room } = await setupRoom();
-  const socket = addPlayer(ctx, "edge-player", { x: 60.5, y: 16, z: 60.5, yaw: 0, pitch: 0 });
+  const socket = addPlayer(ctx, "edge-player", { x: 60.5, y: 16, z: 60.5, yaw: 0, pitch: 0, locomotion: "grounded" });
   const put = ctx.storage.put.bind(ctx.storage);
   const writes = [];
   ctx.storage.put = async (key, value) => { writes.push(key); await put(key, value); };

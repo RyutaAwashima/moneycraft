@@ -20,14 +20,27 @@ test("room codes use a fixed, unambiguous alphabet and capacity is sixteen", () 
 });
 
 test("player states must be finite and inside world bounds", () => {
-  const valid = { x: 2, y: 6, z: 3, yaw: -2.4, pitch: 0.2 };
+  const valid = { x: 2, y: 6, z: 3, yaw: -2.4, pitch: 0.2, locomotion: "grounded" };
   assert.equal(isPlayerStatePayload(valid), true);
   assert.equal(isPlayerStatePayload({ ...valid, x: WORLD_DIMENSIONS.width + 1 }), false);
   assert.equal(isPlayerStatePayload({ ...valid, y: -1 }), false);
   assert.equal(isPlayerStatePayload({ ...valid, y: Number.NaN }), false);
-  assert.equal(isPlayerStatePayload({ ...valid, pitch: 2 }), false);
+  assert.equal(isPlayerStatePayload({ ...valid, pitch: 2, locomotion: "grounded" }), false);
   assert.equal(isPlayerStatePayload(null), false);
-  assert.equal(PROTOCOL_VERSION, 11);
+  assert.equal(PROTOCOL_VERSION, 12);
+});
+
+test("locomotion is a required finite state and pose data cannot enter position packets", () => {
+  const state = { x: 2, y: 6, z: 3, yaw: 0, pitch: 0, locomotion: "grounded" };
+  for (const locomotion of globalThis.MoneycraftAvatar.locomotionStates) {
+    assert.equal(isPlayerStatePayload({ ...state, locomotion }), true);
+  }
+  for (const locomotion of [undefined, null, "", "walk", "swimming", 1, {}, []]) {
+    assert.equal(isPlayerStatePayload({ ...state, locomotion }), false);
+  }
+  assert.equal(isPlayerStatePayload({ ...state, pose: [] }), false);
+  const { locomotion, ...oldState } = state;
+  assert.equal(isPlayerStatePayload(oldState), false);
 });
 
 test("shared appearances use the exact finite version-one atelier schema", () => {
@@ -66,7 +79,7 @@ test("block edits validate identifiers, bounds and compare-and-set operations", 
 });
 
 test("validation uses the room size, including coordinates beyond the old edge", () => {
-  const state = { x: 63.5, y: 6, z: 63.5, yaw: 0, pitch: 0 };
+  const state = { x: 63.5, y: 6, z: 63.5, yaw: 0, pitch: 0, locomotion: "grounded" };
   const edit = { requestId: "edge-1", x: 63, y: 8, z: 63, block: 9, orientation: 0, expectedBlock: 0 };
   const legacy = globalThis.MoneycraftWorld.legacyOptions;
   assert.equal(isPlayerStatePayload(state), true);

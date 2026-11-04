@@ -61,6 +61,7 @@
   });
   const storageKey = "moneycraft-avatar-prototype-v1";
   const motions = Object.freeze(["still", "walk", "wave", "look"]);
+  const locomotionStates = Object.freeze(["grounded", "rising", "falling", "flying"]);
   const styles = Object.freeze(["voxel", "soft-doll"]);
   const pivots = Object.freeze([
     [0, 0, 0], [0, 1.3, 0], [-0.32, 1.23, 0], [0.32, 1.23, 0],
@@ -320,6 +321,6 @@
   }
 
   root.MoneycraftAvatar = Object.freeze({
-    options, defaults, storageKey, isAppearance, createBoxes, createMesh, motions, styles, createPose, posePositions,
+    options, defaults, storageKey, isAppearance, createBoxes, createMesh, motions, locomotionStates, styles, createPose, posePositions,
   });
 })(globalThis);

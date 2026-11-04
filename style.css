@@ -630,6 +630,38 @@ body.game-expanded {
   background: linear-gradient(#9bd2e4 0%, #d7ecd8 100%);
 }
 
+.camera-toggle {
+  min-height: 44px;
+}
+
+.camera-status {
+  position: absolute;
+  top: 82px;
+  right: 12px;
+  max-width: calc(100% - 24px);
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: #172b25e6;
+  color: #fff;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.third-person .crosshair,
+.third-person .touch-mine,
+.third-person .touch-place,
+.third-person .touch-pick {
+  display: none;
+}
+
+.touch-enabled.third-person .canvas-hint {
+  display: none;
+}
+
+.touch-enabled .camera-status {
+  top: 12px;
+}
+
 #game {
   display: block;
   width: 100%;

@@ -757,10 +757,12 @@ export class Room {
     return sockets.flatMap((socket) => {
       const player = socket.deserializeAttachment();
       if (!player) return [];
+      const validState = player.state == null || isPlayerStatePayload(player.state);
+      if (!validState) console.warn("Discarding an incompatible stored player state.", player.id);
       return [{
         id: player.id,
         displayName: player.displayName,
-        state: player.state,
+        state: validState ? player.state : null,
         appearance: player.appearance ?? { ...globalThis.MoneycraftAvatar.defaults },
       }];
     });

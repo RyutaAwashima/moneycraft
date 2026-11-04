@@ -28,7 +28,31 @@ multiplayer room controls. Invitation links open the room-management tab.
 The standalone prototype is complete. The game now displays each remote player's
 saved appearance using the soft-doll model. Feet placement, movement-facing
 direction and overhead names follow the existing player state; collision and
-first-person view are unchanged. Movement-linked animations are not connected yet.
+first-person building controls are unchanged. Your own third-person avatar now
+walks and runs with actual ground travel, eases to rest on stopping or pushing
+against a wall, and tilts its head with vertical look direction.
+Backward travel reverses the gait; sideways and diagonal travel keep the body's
+existing facing direction. Sprint increases cadence and swing.
+Jump ascent draws the legs forward slightly; falling releases the legs and
+spreads the arms. Flight uses a wider, stable arm spread with a modest backward
+arm sweep while travelling; hover, ascent and descent all retain the flight
+pose. Air poses blend smoothly with the fading ground gait and ease back into
+walking or rest on landing, without camera bob or a physical crouch.
+Walking up slabs or stairs does not trigger a jump pose.
+Head tilt is smoothed and limited to 0.65 radians in either direction;
+hair, face and head accessories follow the same joint.
+The same animation rules now apply to other players. Protocol v12 adds one
+`locomotion` field (`grounded`, `rising`, `falling`, or `flying`) to the existing
+100ms position packets; joint angles, vertices and gait phase are not sent.
+Remote ground gait follows interpolated travel, capped at sprint speed.
+Stationary packets stop the gait even while position interpolation settles.
+After 500ms without a state update, movement and air poses ease toward neutral;
+the existing five-second player timeout still removes the model.
+Resuming after a gap or a correction over two blocks resets the motion and
+snaps the position rather than playing a fast walk. Animation does not change
+collision, camera or save formats.
+Foot planting/terrain IK, independent head yaw, gestures and first-person
+held-block animation remain future work.
 Soft-doll is the selected standard for the game. Voxel remains an atelier-only
 comparison, not a saved or shared game style. See the staged integration plan in
 [ROADMAP.md](./ROADMAP.md).
@@ -68,7 +92,9 @@ from the game. `node dev-server.js` serves the editor at
   focus, page return or a cross-tab storage change. Unsaved drafts and comparison
   styles are never shared. Missing saves use the default; invalid or unavailable
   storage reports default use without overwriting the old data.
-- Protocol **v11** sends `player-appearance` on entry or a saved change, not with
+  The same saved choices are available to your own third-person avatar offline,
+  without joining a room.
+- Protocol **v12** sends `player-appearance` on entry or a saved change, not with
   every position packet. The Worker uses the same finite-ID, exact-key v1
   validator as the editor. Accepted appearances live in connection attachments,
   appear in welcome/roster messages for late joiners, and survive Worker
@@ -77,7 +103,7 @@ from the game. `node dev-server.js` serves the editor at
   20-per-second player-message limit with positions; malformed data is rejected.
   Custom meshes rebuild only when choices change and are released with their
   remote-player state. Names follow the chosen hair/headwear height.
-  Synchronized animation and cosmetic-unlock permissions remain future work.
+  Cosmetic-unlock permissions remain future work.
   Additional accessories are planned as in-game unlocks; the basic skin editor
   remains bounded rather than adding arbitrary customization.
 
@@ -87,6 +113,18 @@ Run its focused checks with `node --test avatar.test.js`.
 
 ## Controls
 
+- `V` or the **視点** button cycles first person, rear third person and front
+  third person (selfie view). Third person is **view-only**: movement, looking,
+  jumping and flight work, but mining, placement and eyedropper do not.
+  Switching stops held building actions; the crosshair, target outline, held
+  block and touch building buttons are hidden. Movement remains body-relative
+  even in front view. The camera mode is local-only, starts in first person on
+  reload, and is not included in saves or network state.
+  Third-person cameras follow at up to four blocks from the eye-height anchor.
+  A padded sweep against actual block boxes (including glass, slabs and stairs)
+  brings the camera inward at obstructions and world edges; very close cameras
+  temporarily hide your model. Your avatar uses the same soft-doll geometry as
+  other players and renders before translucent terrain.
 - Click the game to capture the mouse; move the mouse to look around
 - `W` / `A` / `S` / `D`: move; `Space`: jump
 - Double-tap `W` within 300 ms to sprint until releasing `W`, or hold `F` + `W`.
@@ -347,9 +385,12 @@ The published client currently connects to
 Cloudflare Durable Objects for room state; local Durable Object storage is for
 development only. The client and Worker are deployed separately.
 
-The 2026-11-04 avatar-sharing release uses protocol **v11**.
+The 2026-11-04 third-person and animation-sharing release uses protocol **v12**,
+replacing the earlier v11 avatar-sharing release.
 Publish the matching Worker before the static client, then reload all
-participants; v10 and v11 clients cannot share a session.
+participants; v11 and v12 clients cannot share a session. Do not publish just
+one side of the change. Older attached position states are explicitly discarded
+with a Worker warning and appear as unknown until a valid v12 update arrives.
 World snapshot format v2 and the existing atelier appearance v1 remain unchanged.
 
 The cooperative-building release is published on GitHub Pages and the Worker

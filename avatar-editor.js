@@ -223,7 +223,7 @@
       updateControls();
       report(previewFailed
         ? "この姿を保存しました。ただし3Dプレビューは利用できません。ページを再読み込みしてください。"
-        : "この姿を保存しました。ゲームへ戻ると、共同建築の参加者へソフトドール風で表示されます。", previewFailed);
+        : "この姿を保存しました。ゲームへ戻ると三人称で確認でき、共同建築の参加者へソフトドール風で表示されます。", previewFailed);
     } catch (error) {
       console.error("Avatar prototype could not be saved.", error);
       storageFailed = true;

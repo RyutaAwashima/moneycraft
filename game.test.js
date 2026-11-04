@@ -25,6 +25,7 @@ function createGame({
   const outlineUploads = [];
   const renderEvents = [];
   const heldRenderEvents = [];
+  const avatarPoses = [];
   const viewMatrices = [];
   let heldPass = false;
   let viewMatrix;
@@ -204,6 +205,12 @@ function createGame({
   context.MoneycraftAvatar = {
     ...avatarApi,
     createMesh: (...args) => { avatarMeshBuilds += 1; return avatarApi.createMesh(...args); },
+    posePositions: (mesh, pose, output) => {
+      if (recordRendering) avatarPoses.push({
+        mesh, pose: pose.map((angles) => Array.from(angles)), sourcePose: pose, output,
+      });
+      return avatarApi.posePositions(mesh, pose, output);
+    },
   };
   const worldApi = context.MoneycraftWorld;
   if (soloWorld) saved.set("moneycraft-3d-world-v2", JSON.stringify({
@@ -252,7 +259,7 @@ function createGame({
   window.addEventListener("moneycraft:send-player-state", (event) => { state = event.detail; });
   return { get model() { return model; }, worldApi, originalSave, elements, uploads, drawCalls, saved, soundEvents,
     texturePixels, previews, textureUploads, uvUploads, positionUploads, outlineUploads, renderEvents, heldRenderEvents, viewMatrices,
-    emit, join, change, selectBlock, roomWorld, window, document, timers, avatarApi,
+    emit, join, change, selectBlock, roomWorld, window, document, timers, avatarApi, avatarPoses,
     get avatarMeshBuilds() { return avatarMeshBuilds; },
     frame: (count = 1, interval = 1000 / 30) => {
       for (let i = 0; i < count; i += 1) { time += interval; frame(time); }
@@ -275,11 +282,525 @@ function pressJump(game) {
   input(game.window, "keyup", { code: "Space" });
 }
 
+function cameraFromDraw(draw, aspect = 960 / 540) {
+  const m = draw.matrix;
+  const vertical = 1 / Math.tan(Math.PI / 6);
+  const horizontal = vertical / aspect;
+  const rows = [[m[0] / horizontal, m[4] / horizontal, m[8] / horizontal],
+    [m[1] / vertical, m[5] / vertical, m[9] / vertical], [-m[3], -m[7], -m[11]]];
+  const translation = [m[12] / horizontal, m[13] / vertical, -m[15]];
+  return [0, 1, 2].map((axis) => -rows.reduce((sum, row, index) => sum + row[axis] * translation[index], 0));
+}
+
+test("view cycling renders the local saved avatar only in third person and preserves the player state", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  const state = { ...game.state() };
+  const appearance = { ...game.avatarApi.defaults, hair: "long", hairColor: "rose", accessory: "glasses" };
+  game.emit("local-appearance", appearance);
+  const mesh = game.avatarApi.createMesh(appearance, "soft-doll");
+  const render = () => {
+    game.renderEvents.length = 0;
+    game.heldRenderEvents.length = 0;
+    game.frame();
+    return game.renderEvents.find((event) => !event.textured && event.mode === 4);
+  };
+  assert.equal(render(), undefined);
+  assert.ok(game.heldRenderEvents.length > 0);
+  for (const [mode, sign] of [["後方三人称", 1], ["正面三人称", -1]]) {
+    input(game.window, "keydown", { code: "KeyV" });
+    const draw = render();
+    assert.equal(draw.count, mesh.positions.length / 3);
+    assert.deepEqual(draw.colors, Array.from(mesh.colors));
+    const eye = cameraFromDraw(draw);
+    assert.ok(Math.abs(eye[0] - state.x) < 0.00002);
+    assert.ok(Math.abs(eye[1] - (state.y + 1.7 * 0.88 - Math.sin(state.pitch) * 4 * sign)) < 0.00002);
+    assert.ok(Math.abs(eye[2] - (state.z + Math.cos(state.pitch) * 4 * sign)) < 0.00002);
+    assert.match(game.elements.get("#camera-status").textContent, new RegExp(mode));
+    assert.equal(game.elements.get("#camera-status").hidden, false);
+    assert.equal(game.heldRenderEvents.length, 0);
+    assert.ok(game.renderEvents.every((event) => event.mode !== 1), "no targeting outline");
+    assert.deepEqual({ ...game.state() }, state, "camera must not change the body state sent to peers");
+  }
+  input(game.window, "keydown", { code: "KeyV", repeat: true });
+  assert.match(game.elements.get("#camera-toggle").textContent, /正面三人称/);
+  input(game.elements.get("#camera-toggle"), "click");
+  assert.equal(render(), undefined);
+  assert.equal(game.elements.get("#camera-status").hidden, true);
+  assert.ok(game.heldRenderEvents.length > 0);
+  assert.equal(game.avatarMeshBuilds, 2, "switching never rebuilds the appearance");
+});
+
+test("third person suppresses mouse, touch and eyedropper edits and cancels held building", () => {
+  const game = createGame();
+  game.join();
+  game.frame(10);
+  const state = game.state();
+  game.change(1, Math.floor(state.x), 2, Math.floor(state.z) - 2, 7);
+  let edits = 0;
+  game.window.addEventListener("moneycraft:send-block-edit", () => { edits += 1; });
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.elements.get("#game"), "mousedown", { button: 0 });
+  const before = edits;
+  assert.ok(before > 0, "test begins with an active building action");
+  input(game.window, "keydown", { code: "KeyV" });
+  assert.equal(game.runTimeout(200), false);
+  for (const mode of [1, 2]) {
+    input(game.elements.get("#game"), "mousedown", { button: 0 });
+    input(game.elements.get("#game"), "mousedown", { button: 2 });
+    input(game.elements.get("#game"), "mousedown", { button: 1 });
+    input(game.window, "keydown", { code: "KeyQ" });
+    for (const id of ["#touch-mine", "#touch-place", "#touch-pick"]) {
+      input(game.elements.get(id), "pointerdown", { pointerId: 7, pointerType: "touch" });
+      assert.equal(game.elements.get(id).disabled, true);
+    }
+    game.frame();
+    assert.equal(edits, before);
+    input(game.elements.get("#camera-toggle"), "click");
+  }
+  assert.equal(game.elements.get("#touch-place").disabled, false);
+});
+
+test("third-person camera sweeps against walls, glass and oriented partial block boxes", () => {
+  for (const [block, orientation, obstructs] of [[7, 0, true], [9, 0, true], [16, 0, false],
+    [16, 20, true], [17, 0, true]]) {
+    const game = createGame({ recordRendering: true });
+    game.join();
+    game.frame(10);
+    game.document.pointerLockElement = game.elements.get("#game");
+    input(game.window, "mousemove", { movementX: 0, movementY: game.state().pitch / 0.0025 });
+    pressJump(game);
+    pressJump(game);
+    input(game.window, "keydown", { code: "Space" });
+    game.frame(2);
+    input(game.window, "keyup", { code: "Space" });
+    const state = game.state();
+    const x = Math.floor(state.x);
+    const z = Math.floor(state.z) + 2;
+    game.change(1, x, 2, z, block, 0, "camera-block", orientation);
+    input(game.elements.get("#camera-toggle"), "click");
+    game.renderEvents.length = 0;
+    game.frame();
+    const eye = cameraFromDraw(game.renderEvents[0]);
+    if (obstructs) {
+      assert.ok(eye[2] < z + (block === 17 ? 0.5 : 0) - 0.22,
+        `${block}/${orientation} stops before its actual solid surface`);
+      assert.ok(eye[2] > state.z, "camera remains between body and obstruction");
+    } else {
+      assert.ok(eye[2] > state.z + 3.9, "lower slab clearance is not a full cube");
+    }
+    game.change(2, x, 2, z, 0, block);
+    game.renderEvents.length = 0;
+    game.frame();
+    assert.ok(cameraFromDraw(game.renderEvents[0])[2] > state.z + 3.9, "camera recovers when obstacle is removed");
+  }
+});
+
+test("camera obstruction at the near plane hides the local body rather than clipping through a wall", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  const state = game.state();
+  game.change(1, Math.floor(state.x), 2, Math.floor(state.z) + 1, 7);
+  input(game.elements.get("#camera-toggle"), "click");
+  game.renderEvents.length = 0;
+  game.frame();
+  const eye = cameraFromDraw(game.renderEvents[0]);
+  assert.ok(eye[2] - state.z < 0.8);
+  assert.ok(game.renderEvents.every((event) => event.textured || event.mode !== 4));
+  assert.equal(game.elements.get("#camera-status").hidden, false);
+});
+
+test("third-person camera stays inside world edges and protects the near plane on wide canvases", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  const state = { ...game.state() };
+  game.elements.get("#game").clientWidth = 2500;
+  game.elements.get("#game").clientHeight = 400;
+  game.change(1, Math.floor(state.x), 2, Math.floor(state.z) + 2, 7);
+  input(game.elements.get("#camera-toggle"), "click");
+  game.renderEvents.length = 0;
+  game.frame();
+  const eye = cameraFromDraw(game.renderEvents[0], 2500 / 400);
+  const margin = 0.08 * Math.hypot(1, Math.tan(Math.PI / 6), Math.tan(Math.PI / 6) * 2500 / 400) + 0.02;
+  assert.ok(eye[2] < Math.floor(state.z) + 2 - margin);
+  input(game.window, "keydown", { code: "KeyA" });
+  game.frame(150);
+  input(game.window, "keyup", { code: "KeyA" });
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.window, "mousemove", { movementX: Math.PI / 2 / 0.0025, movementY: 0 });
+  game.renderEvents.length = 0;
+  game.frame();
+  const boundaryEye = cameraFromDraw(game.renderEvents[0], 2500 / 400);
+  assert.ok(boundaryEye[0] >= 0.27, "camera may contract to the body but must never cross the boundary");
+});
+
+test("third-person viewing keeps movement and jump while camera shortcuts ignore editing fields", () => {
+  const game = createGame();
+  game.join();
+  game.frame(10);
+  input(game.elements.get("#camera-toggle"), "click");
+  const label = game.elements.get("#camera-toggle").textContent;
+  game.window.isContentEditable = true;
+  input(game.window, "keydown", { code: "KeyV" });
+  assert.equal(game.elements.get("#camera-toggle").textContent, label);
+  game.window.isContentEditable = false;
+  const before = { ...game.state() };
+  input(game.window, "keydown", { code: "KeyW" });
+  game.frame(5);
+  input(game.window, "keyup", { code: "KeyW" });
+  assert.ok(game.state().z < before.z);
+  pressJump(game);
+  game.frame();
+  assert.ok(game.state().y > before.y);
+});
+
+test("local gait follows actual forward, backward and sideways travel and eases to rest", () => {
+  for (const [key, sign] of [["KeyW", 1], ["KeyS", -1], ["KeyA", 1], ["KeyD", 1]]) {
+    const game = createGame({ recordRendering: true });
+    game.join();
+    game.frame(10);
+    input(game.elements.get("#camera-toggle"), "click");
+    const start = { ...game.state() };
+    input(game.window, "keydown", { code: key });
+    game.frame(5);
+    input(game.window, "keyup", { code: key });
+    const end = game.state();
+    const distance = Math.hypot(end.x - start.x, end.z - start.z);
+    const pose = game.avatarPoses.at(-1).pose;
+    const swing = Math.sin(sign * distance * Math.PI * 2 / 2.4) * 0.48 * (1 - Math.exp(-12 * 5 / 30));
+    assert.ok(Math.abs(pose[4][0] - swing) < 0.000001, key);
+    assert.equal(pose[5][0], -pose[4][0]);
+    assert.equal(pose[2][0], -pose[4][0] * 0.8);
+    assert.equal(pose[3][0], pose[4][0] * 0.8);
+    assert.ok(Math.abs(pose[4][0]) > 0.2);
+    const buffer = game.avatarPoses.at(-1).output;
+    game.frame();
+    assert.ok(Math.abs(game.avatarPoses.at(-1).pose[4][0]) < Math.abs(swing), "stop is gradual");
+    game.frame(30);
+    assert.equal(Math.abs(game.avatarPoses.at(-1).pose[4][0]), 0);
+    assert.equal(game.avatarPoses.at(-1).output, buffer, "reuse the posed vertex buffer");
+    assert.equal(game.avatarMeshBuilds, 1, "motion never rebuilds the rest mesh");
+  }
+});
+
+test("local sprint and diagonal gait use speed and distance without changing physics or network state", () => {
+  const run = (keys, frames = 5, interval = 1000 / 30) => {
+    const game = createGame({ recordRendering: true });
+    game.join();
+    game.frame(10);
+    input(game.elements.get("#camera-toggle"), "click");
+    const start = { ...game.state() };
+    for (const code of keys) input(game.window, "keydown", { code });
+    game.frame(frames, interval);
+    const end = { ...game.state() };
+    return { game, end, distance: Math.hypot(end.x - start.x, end.z - start.z),
+      pose: game.avatarPoses.at(-1).pose };
+  };
+  const walk = run(["KeyW"]);
+  const diagonal = run(["KeyW", "KeyD"]);
+  const sprint = run(["KeyW", "KeyF"]);
+  assert.ok(Math.abs(walk.distance - diagonal.distance) < 0.000001);
+  assert.ok(Math.abs(walk.pose[4][0] - diagonal.pose[4][0]) < 0.000001);
+  assert.ok(Math.abs(sprint.distance / walk.distance - 1.5) < 0.000001);
+  const expected = Math.sin(sprint.distance * Math.PI * 2 / 2.4) * 0.48 * 1.3 * (1 - Math.exp(-2));
+  assert.ok(Math.abs(sprint.pose[4][0] - expected) < 0.000001);
+  const highRate = run(["KeyW"], 10, 1000 / 60);
+  assert.ok(Math.abs(highRate.pose[4][0] - walk.pose[4][0]) < 0.000001, "same travel at 30 and 60 fps");
+  assert.deepEqual(Object.keys(walk.end).sort(), ["locomotion", "pitch", "x", "y", "yaw", "z"]);
+});
+
+test("local gait stops against a wall and does not walk during jump or flight", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  input(game.elements.get("#camera-toggle"), "click");
+  const state = game.state();
+  for (let y = 1; y <= 3; y += 1) game.change(y, Math.floor(state.x), y, Math.floor(state.z) - 2, 7);
+  input(game.window, "keydown", { code: "KeyW" });
+  game.frame(5);
+  assert.ok(Math.abs(game.avatarPoses.at(-1).pose[4][0]) > 0.1);
+  game.frame(40);
+  assert.equal(game.avatarPoses.at(-1).pose[4][0], 0, "holding forward into a wall is not walking");
+  input(game.window, "keyup", { code: "KeyW" });
+  game.advance(400);
+  pressJump(game);
+  input(game.window, "keydown", { code: "KeyA" });
+  game.frame(5);
+  let pose = game.avatarPoses.at(-1).pose;
+  assert.equal(pose[4][0], pose[5][0], "air travel uses a symmetric pose, not an alternating walk");
+  pressJump(game);
+  game.frame(20);
+  pose = game.avatarPoses.at(-1).pose;
+  assert.equal(pose[4][0], pose[5][0], "flying sideways does not start an alternating walk");
+  input(game.window, "keyup", { code: "KeyA" });
+});
+
+test("local head pitch is clamped, smoothed and applied to head attachments without mutating the rest mesh", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  const appearance = { ...game.avatarApi.defaults, hair: "ponytail", accessory: "glasses" };
+  game.emit("local-appearance", appearance);
+  input(game.elements.get("#camera-toggle"), "click");
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.window, "mousemove", { movementX: 0, movementY: -1000 });
+  game.frame();
+  const first = game.avatarPoses.at(-1);
+  assert.ok(first.pose[1][0] < 0 && first.pose[1][0] > -0.65, "looking up gradually tilts the face up");
+  const rest = Array.from(first.mesh.positions);
+  game.frame(30);
+  const latest = game.avatarPoses.at(-1);
+  assert.ok(Math.abs(latest.pose[1][0] + 0.65) < 0.00001);
+  for (let vertex = 0; vertex < latest.mesh.joints.length; vertex += 1) {
+    const offset = vertex * 3;
+    if (latest.mesh.joints[vertex] !== 1) {
+      assert.deepEqual(Array.from(latest.output.slice(offset, offset + 3)), rest.slice(offset, offset + 3));
+    }
+  }
+  assert.notDeepEqual(Array.from(latest.output), rest);
+  assert.deepEqual(Array.from(latest.mesh.positions), rest);
+  const draw = game.renderEvents.findLast((event) => !event.textured && event.mode === 4);
+  const state = game.state();
+  for (let offset = 0; offset < latest.output.length; offset += 3) {
+    const expected = [state.x - latest.output[offset], state.y + latest.output[offset + 1],
+      state.z - latest.output[offset + 2]];
+    assert.ok(expected.every((value, axis) => Math.abs(draw.positions[offset + axis] - value) < 0.000002),
+      "the in-world draw uses posed, not rest, vertices");
+  }
+  input(game.window, "mousemove", { movementX: 0, movementY: 2000 });
+  game.frame(30);
+  assert.ok(Math.abs(game.avatarPoses.at(-1).pose[1][0] - 0.65) < 0.00001);
+  assert.equal(game.avatarMeshBuilds, 2);
+});
+
+test("local animation survives view and appearance changes and resets on world transitions", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  input(game.window, "keydown", { code: "KeyW" });
+  game.frame(5);
+  input(game.elements.get("#camera-toggle"), "click");
+  game.frame();
+  const before = game.avatarPoses.at(-1);
+  assert.ok(Math.abs(before.pose[4][0]) > 0.1, "motion also advances while first-person body is hidden");
+  input(game.elements.get("#camera-toggle"), "click");
+  game.frame();
+  const front = game.avatarPoses.at(-1);
+  assert.ok(Math.abs(front.pose[4][0]) > 0.1, "view switching does not reset pose");
+  game.emit("local-appearance", { ...game.avatarApi.defaults, hair: "long", accessory: "cap" });
+  game.frame();
+  const changed = game.avatarPoses.at(-1);
+  assert.notEqual(changed.mesh, before.mesh);
+  assert.equal(changed.output.length, changed.mesh.positions.length);
+  assert.ok(Math.abs(changed.pose[4][0]) > 0.1, "appearance changes preserve motion");
+  game.emit("room-left", {});
+  game.frame();
+  assert.equal(game.avatarPoses.at(-1).pose[4][0], 0);
+  assert.equal(game.errors.length, 0);
+});
+
+test("local ground gait continues over half steps and starts from touch movement", () => {
+  for (const block of [16, 17]) {
+    const game = createGame({ recordRendering: true });
+    const index = (game.roomWorld.depth + 19) * game.roomWorld.width + 20;
+    game.roomWorld.blocks[index] = block;
+    game.roomWorld.orientations[index] = block === 17 ? game.worldApi.orientationFromFacing([0, 0, -1]) : 0;
+    game.join();
+    game.frame(10);
+    input(game.elements.get("#camera-toggle"), "click");
+    const canvas = game.elements.get("#game");
+    input(canvas, "pointerdown", { pointerId: 1, pointerType: "touch", clientX: 100, clientY: 200 });
+    input(canvas, "pointermove", { pointerId: 1, pointerType: "touch", clientX: 100, clientY: 156 });
+    let stepped = false;
+    for (let frame = 0; frame < 5; frame += 1) {
+      game.frame();
+      if (game.state().y > 1) {
+        stepped = true;
+        assert.ok(Math.abs(game.avatarPoses.at(-1).pose[4][0]) > 0.1, "step ascent keeps the ground gait");
+        assert.equal(game.avatarPoses.at(-1).pose[2][2], 0, "steps must not start an airborne pose");
+      }
+    }
+    assert.ok(stepped, `climbed ${block}`);
+    input(canvas, "pointerup", { pointerId: 1 });
+    game.frame(30);
+    assert.equal(Math.abs(game.avatarPoses.at(-1).pose[4][0]), 0);
+  }
+});
+
+test("local jump changes smoothly from rising to falling and returns to rest after landing", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  input(game.elements.get("#camera-toggle"), "click");
+  const start = { ...game.state() };
+  pressJump(game);
+  game.frame();
+  const first = game.avatarPoses.at(-1).pose;
+  assert.ok(first[4][0] < 0 && first[4][0] > -0.25, "takeoff eases into a tucked-leg pose");
+  assert.ok(first[2][2] < 0 && first[3][2] > 0);
+  game.frame(5);
+  assert.ok(game.avatarPoses.at(-1).pose[4][0] < -0.2, "rising legs approach the jump pose");
+  let previousY = game.state().y;
+  let falling = false;
+  for (let frame = 0; frame < 24; frame += 1) {
+    game.frame();
+    const y = game.state().y;
+    if (y < previousY && y > start.y) falling = true;
+    previousY = y;
+    if (frame === 12) {
+      const pose = game.avatarPoses.at(-1).pose;
+      assert.ok(pose[2][2] < -0.2, "falling spreads the arms more than rising");
+      assert.ok(pose[4][0] > 0, "falling releases the tucked legs");
+    }
+  }
+  assert.ok(falling);
+  assert.equal(game.state().y, start.y);
+  game.frame(30);
+  for (const joint of [2, 3, 4, 5]) {
+    for (const angle of game.avatarPoses.at(-1).pose[joint]) assert.equal(Math.abs(angle), 0);
+  }
+  assert.equal(game.avatarMeshBuilds, 1);
+});
+
+test("local ledge falls use falling rather than jump poses and landing blends back into walking", () => {
+  const game = createGame({ recordRendering: true });
+  const world = game.roomWorld;
+  world.blocks[(world.depth + 20) * world.width + 20] = 7;
+  game.join();
+  game.frame(10);
+  assert.equal(game.state().y, 2);
+  input(game.elements.get("#camera-toggle"), "click");
+  input(game.window, "keydown", { code: "KeyW" });
+  let sawFall = false;
+  let sawLanding = false;
+  for (let frame = 0; frame < 20; frame += 1) {
+    game.frame();
+    const state = game.state();
+    const pose = game.avatarPoses.at(-1).pose;
+    if (state.y < 2 && state.y > 1) {
+      sawFall = true;
+      assert.ok(pose[2][2] < 0);
+      assert.ok(pose[4][0] + pose[5][0] >= 0, "no jump tuck on walking off a ledge");
+    }
+    if (sawFall && state.y === 1) sawLanding = true;
+  }
+  assert.ok(sawFall && sawLanding);
+  game.frame(10);
+  const pose = game.avatarPoses.at(-1).pose;
+  assert.ok(Math.abs(pose[4][0] - pose[5][0]) > 0.2, "landed player resumes alternating ground gait");
+  assert.ok(Math.abs(pose[2][2]) < 0.01, "fall spread fades after landing");
+  input(game.window, "keyup", { code: "KeyW" });
+});
+
+test("local flight keeps a stable spread pose for hover, ascent and descent then blends to falling", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  input(game.elements.get("#camera-toggle"), "click");
+  startFlying(game);
+  game.frame(20);
+  const hover = game.avatarPoses.at(-1).pose;
+  assert.ok(Math.abs(hover[2][2] + 0.4) < 0.001);
+  assert.ok(Math.abs(hover[3][2] - 0.4) < 0.001);
+  assert.ok(Math.abs(hover[4][0] - 0.12) < 0.001);
+  const buffer = game.avatarPoses.at(-1).output;
+  input(game.window, "keydown", { code: "Space" });
+  game.frame(10);
+  input(game.window, "keyup", { code: "Space" });
+  const raisedY = game.state().y;
+  input(game.window, "keydown", { code: "ShiftLeft" });
+  game.frame(3);
+  input(game.window, "keyup", { code: "ShiftLeft" });
+  assert.ok(game.state().y < raisedY);
+  assert.ok(Math.abs(game.avatarPoses.at(-1).pose[2][2] + 0.4) < 0.001, "vertical flight remains flight, not falling");
+  input(game.window, "keydown", { code: "KeyW" });
+  game.frame(8);
+  input(game.window, "keyup", { code: "KeyW" });
+  assert.ok(game.avatarPoses.at(-1).pose[2][0] < -0.3, "travel has a modest arm sweep");
+  game.advance(400);
+  pressJump(game);
+  pressJump(game);
+  game.frame(3);
+  const falling = game.avatarPoses.at(-1).pose;
+  assert.ok(falling[2][2] > -0.4 && falling[2][2] < -0.3, "flight release blends into fall");
+  assert.equal(game.avatarPoses.at(-1).output, buffer);
+  game.frame(50);
+  assert.equal(game.state().y, 1);
+  assert.equal(Math.abs(game.avatarPoses.at(-1).pose[2][2]), 0);
+});
+
+test("local airborne posing is frame-rate independent and survives appearance and view changes", () => {
+  const hover = (frames, interval) => {
+    const game = createGame({ recordRendering: true });
+    game.join();
+    game.frame(10);
+    input(game.elements.get("#camera-toggle"), "click");
+    startFlying(game);
+    game.frame();
+    game.frame(frames, interval);
+    return game;
+  };
+  const slow = hover(5, 1000 / 30);
+  const fast = hover(10, 1000 / 60);
+  for (const joint of [2, 3, 4, 5]) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      assert.ok(Math.abs(slow.avatarPoses.at(-1).pose[joint][axis]
+        - fast.avatarPoses.at(-1).pose[joint][axis]) < 0.000001);
+    }
+  }
+  const before = slow.avatarPoses.at(-1);
+  slow.emit("local-appearance", { ...slow.avatarApi.defaults, hair: "long", accessory: "cap" });
+  input(slow.elements.get("#camera-toggle"), "click");
+  slow.frame();
+  const after = slow.avatarPoses.at(-1);
+  assert.notEqual(after.mesh, before.mesh);
+  assert.ok(after.pose[2][2] < before.pose[2][2], "appearance and view keep the flight blend");
+  assert.equal(after.output.length, after.mesh.positions.length);
+  slow.emit("room-left", {});
+  slow.frame();
+  for (const joint of [2, 3, 4, 5]) {
+    for (const angle of slow.avatarPoses.at(-1).pose[joint]) assert.equal(Math.abs(angle), 0);
+  }
+  assert.equal(slow.errors.length, 0);
+});
+
+test("touch takeoff and ceiling impact choose air poses without moving the body or camera anchor", () => {
+  const game = createGame({ recordRendering: true });
+  game.join();
+  game.frame(10);
+  const state = { ...game.state() };
+  game.change(1, Math.floor(state.x), 3, Math.floor(state.z), 7);
+  input(game.elements.get("#camera-toggle"), "click");
+  game.frame();
+  const pose = game.avatarPoses.at(-1).sourcePose;
+  input(game.elements.get("#touch-jump"), "pointerdown", { pointerId: 7, pointerType: "touch" });
+  input(game.elements.get("#touch-jump"), "pointerup", { pointerId: 7 });
+  game.frame();
+  assert.ok(pose[4][0] < 0, "touch jump enters the rise pose even when the close camera hides the body");
+  assert.ok(game.state().y > state.y && game.state().y <= 1.3, "ceiling still limits body height");
+  game.frame(4);
+  assert.ok(pose[2][2] < -0.12, "ceiling contact transitions into falling");
+  game.frame(40);
+  const end = game.state();
+  assert.equal(end.y, state.y);
+  assert.equal(end.x, state.x);
+  assert.equal(end.z, state.z);
+  const eye = cameraFromDraw(game.renderEvents.at(-1));
+  assert.ok(Math.abs(eye[1] - (end.y + 1.7 * 0.88 - Math.sin(end.pitch) * 4)) < 0.00002,
+    "posing does not bob the camera anchor");
+});
+
 test("remote players use the shared default soft-doll mesh with feet origin and movement-facing yaw", () => {
   const game = createGame({ recordRendering: true });
   const mesh = game.avatarApi.createMesh(game.avatarApi.defaults, "soft-doll");
+  const pose = game.avatarApi.createPose("still", 0);
+  pose[1][0] = -0.6;
+  const posed = game.avatarApi.posePositions(mesh, pose);
   for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-    const state = { x: 20.5, y: 1, z: 15.5, yaw, pitch: 0.6 };
+    const state = { x: 20.5, y: 1, z: 15.5, yaw, pitch: 0.6, locomotion: "grounded" };
     game.advance(1);
     game.join([{ id: "other", displayName: "Builder", state }]);
     game.renderEvents.length = 0;
@@ -290,7 +811,7 @@ test("remote players use the shared default soft-doll mesh with feet origin and 
     assert.deepEqual(draw.colors, Array.from(mesh.colors));
     const angle = Math.PI - yaw;
     for (let offset = 0; offset < mesh.positions.length; offset += 3) {
-      const [x, y, z] = mesh.positions.slice(offset, offset + 3);
+      const [x, y, z] = posed.slice(offset, offset + 3);
       const expected = [state.x + x * Math.cos(angle) + z * Math.sin(angle), state.y + y,
         state.z - x * Math.sin(angle) + z * Math.cos(angle)];
       assert.ok(expected.every((value, axis) => Math.abs(draw.positions[offset + axis] - value) < 0.000002));
@@ -311,11 +832,100 @@ test("remote players use the shared default soft-doll mesh with feet origin and 
   assert.deepEqual(game.errors, []);
 });
 
+test("remote gait follows travel, stops on stationary packets and resets on correction or a long gap", () => {
+  const game = createGame({ recordRendering: true });
+  let state = { x: 20.5, y: 1, z: 15.5, yaw: 0, pitch: 0, locomotion: "grounded" };
+  game.join([{ id: "other", displayName: "Other", state }]);
+  game.frame(3);
+  const mesh = game.avatarPoses.at(-1).mesh;
+  const rest = Array.from(mesh.positions);
+  const send = (changes = {}) => {
+    state = { ...state, ...changes };
+    game.emit("player-state", { playerId: "other", state });
+  };
+  for (let packet = 0; packet < 5; packet += 1) {
+    send({ z: state.z - 0.45 });
+    game.frame(3);
+  }
+  assert.ok(Math.abs(game.avatarPoses.at(-1).pose[4][0]) > 0.05, "moving packets drive the legs");
+  assert.equal(game.avatarPoses.at(-1).pose[5][0], -game.avatarPoses.at(-1).pose[4][0]);
+  const buffer = game.avatarPoses.at(-1).output;
+  for (let packet = 0; packet < 12; packet += 1) { send(); game.frame(3); }
+  assert.equal(Math.abs(game.avatarPoses.at(-1).pose[4][0]), 0, "stationary heartbeats stop the gait");
+  send({ z: state.z - 0.45 });
+  game.frame(3);
+  send({ z: state.z + 5 });
+  game.frame();
+  assert.equal(Math.abs(game.avatarPoses.at(-1).pose[4][0]), 0, "large correction snaps without a fast walk");
+  for (let packet = 0; packet < 3; packet += 1) { send({ z: state.z - 0.45 }); game.frame(3); }
+  game.frame(45);
+  assert.equal(Math.abs(game.avatarPoses.at(-1).pose[4][0]), 0, "stale updates ease to neutral before player removal");
+  send({ z: state.z - 1 });
+  game.frame();
+  assert.equal(Math.abs(game.avatarPoses.at(-1).pose[4][0]), 0, "resume after a gap resets the phase");
+  assert.equal(game.avatarMeshBuilds, 1);
+  assert.deepEqual(Array.from(mesh.positions), rest);
+  assert.equal(buffer.length, mesh.positions.length);
+});
+
+test("remote air and head poses share local motion rules, time out and recover with saved appearance", () => {
+  const game = createGame({ recordRendering: true });
+  let state = { x: 20.5, y: 3, z: 15.5, yaw: 0, pitch: -0.5, locomotion: "rising" };
+  const appearance = { ...game.avatarApi.defaults, hair: "long", accessory: "glasses" };
+  game.join([{ id: "other", displayName: "Other", state, appearance }]);
+  const send = locomotion => {
+    state = { ...state, locomotion };
+    game.emit("player-state", { playerId: "other", displayName: "Other", state, appearance });
+  };
+  const settle = locomotion => {
+    for (let packet = 0; packet < 5; packet += 1) { send(locomotion); game.frame(3); }
+    return game.avatarPoses.at(-1).pose;
+  };
+  let pose = settle("rising");
+  assert.ok(pose[4][0] < -0.2 && pose[2][2] < -0.1);
+  assert.ok(Math.abs(pose[1][0] - 0.5) < 0.001);
+  pose = settle("falling");
+  assert.ok(pose[4][0] > 0.09 && pose[2][2] < -0.29);
+  pose = settle("flying");
+  assert.ok(pose[2][2] < -0.39 && pose[3][2] > 0.39);
+  const buffer = game.avatarPoses.at(-1).output;
+  send("flying");
+  game.frame(3);
+  assert.equal(game.avatarPoses.at(-1).output, buffer, "same appearance reuses per-player deformation storage");
+  game.frame(50);
+  assert.equal(Math.abs(game.avatarPoses.at(-1).pose[2][2]), 0, "lost flight updates do not leave a flying pose");
+  game.advance(5001);
+  game.frame();
+  send("grounded");
+  game.frame();
+  assert.equal(game.avatarMeshBuilds, 3, "timeout recovery reconstructs the saved appearance");
+  assert.equal(Math.abs(game.avatarPoses.at(-1).pose[4][0]), 0);
+  assert.equal(game.errors.length, 0);
+});
+
+test("outgoing locomotion distinguishes ground, jump, fall and flight without pose packets", () => {
+  const game = createGame();
+  game.join();
+  game.frame(10);
+  assert.equal(game.state().locomotion, "grounded");
+  pressJump(game);
+  game.frame(2);
+  assert.equal(game.state().locomotion, "rising");
+  game.frame(12);
+  assert.equal(game.state().locomotion, "falling");
+  game.frame(20);
+  assert.equal(game.state().locomotion, "grounded");
+  startFlying(game);
+  game.frame();
+  assert.equal(game.state().locomotion, "flying");
+  assert.deepEqual(Object.keys(game.state()).sort(), ["locomotion", "pitch", "x", "y", "yaw", "z"]);
+});
+
 test("default avatar geometry is reused across players, interpolation, departure and timeout", () => {
   const game = createGame({ recordRendering: true });
   game.advance(1);
   game.join(["one", "two"].map((id, index) => ({ id, displayName: id,
-    state: { x: 18.5 + index * 3, y: 1, z: 15.5, yaw: 0, pitch: 0 } })));
+    state: { x: 18.5 + index * 3, y: 1, z: 15.5, yaw: 0, pitch: 0, locomotion: "grounded" } })));
   const count = game.avatarApi.createMesh(game.avatarApi.defaults, "soft-doll").positions.length / 3;
   const render = () => {
     game.renderEvents.length = 0;
@@ -324,14 +934,14 @@ test("default avatar geometry is reused across players, interpolation, departure
   };
   assert.equal(render().count, count * 2);
   game.emit("player-state", { playerId: "one",
-    state: { x: 19.5, y: 1, z: 15.5, yaw: Math.PI / 2, pitch: 0 } });
+    state: { x: 19.5, y: 1, z: 15.5, yaw: Math.PI / 2, pitch: 0, locomotion: "grounded" } });
   assert.equal(render().count, count * 2);
   game.emit("player-left", { id: "two" });
   assert.equal(render().count, count);
   game.advance(5001);
   assert.equal(render(), undefined);
   game.emit("player-joined", { id: "three", displayName: "three",
-    state: { x: 20.5, y: 1, z: 15.5, yaw: 0, pitch: 0 } });
+    state: { x: 20.5, y: 1, z: 15.5, yaw: 0, pitch: 0, locomotion: "grounded" } });
   assert.equal(render().count, count);
   game.emit("room-left", {});
   assert.equal(render(), undefined);
@@ -342,7 +952,7 @@ test("default avatar geometry is reused across players, interpolation, departure
 test("remote saved appearances build only on changes and recover after timeout with roster metadata", () => {
   const game = createGame({ recordRendering: true });
   const appearance = { ...game.avatarApi.defaults, hair: "twintails", hairColor: "lavender", accessory: "cap" };
-  const state = { x: 20.5, y: 1, z: 15.5, yaw: Math.PI, pitch: 0 };
+  const state = { x: 20.5, y: 1, z: 15.5, yaw: Math.PI, pitch: 0, locomotion: "grounded" };
   game.advance(1);
   game.join([{ id: "other", displayName: "Other", state, appearance }]);
   const render = () => {
@@ -1608,7 +2218,7 @@ test("transparent faces sort globally, draw after avatars and restore depth writ
   for (const z of [12, 18]) world.blocks[(2 * world.depth + z) * world.width + 20] = 9;
   game.advance(1);
   game.join([{ id: "other", displayName: "Builder",
-    state: { x: 20.5, y: 1, z: 15.5, yaw: 0, pitch: 0 } }]);
+    state: { x: 20.5, y: 1, z: 15.5, yaw: 0, pitch: 0, locomotion: "grounded" } }]);
   game.document.pointerLockElement = game.elements.get("#game");
   input(game.window, "mousemove", { movementX: 0, movementY: -48 });
   game.renderEvents.length = 0;
@@ -2192,7 +2802,7 @@ test("joining avoids occupied spawn positions and sends the new position immedia
   const game = createGame();
   let state;
   game.window.addEventListener("moneycraft:send-player-state", (event) => { state = event.detail; });
-  game.join([{ id: "other", displayName: "Builder", state: { x: 20.5, y: 1, z: 20.5, yaw: 0, pitch: 0 } }]);
+  game.join([{ id: "other", displayName: "Builder", state: { x: 20.5, y: 1, z: 20.5, yaw: 0, pitch: 0, locomotion: "grounded" } }]);
   assert.ok(state);
   assert.ok(Math.hypot(state.x - 20.5, state.z - 20.5) >= 1);
   game.frame();

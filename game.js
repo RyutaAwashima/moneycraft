@@ -28,6 +28,8 @@
   const saveState = document.querySelector("#save-state");
   const resetButton = document.querySelector("#reset-world");
   const remotePlayerLabels = document.querySelector("#remote-player-labels");
+  const cameraToggle = document.querySelector("#camera-toggle");
+  const cameraStatus = document.querySelector("#camera-status");
   if (!gl) {
     message.textContent = "このブラウザーではWebGLを利用できません";
     saveState.textContent = "WebGL対応ブラウザーが必要です";
@@ -228,8 +230,16 @@
   const FRAME_SAMPLE_CAPACITY = 120;
   const PLAYER_HEIGHT = 1.7;
   const PLAYER_RADIUS = 0.28;
+  const WALK_SPEED = 4.5;
+  const WALK_CYCLE_DISTANCE = 2.4;
   const PLAYER_STATE_INTERVAL_MS = 100;
   const REMOTE_PLAYER_TIMEOUT = 5000;
+  const REMOTE_MOTION_TIMEOUT = 500;
+  const THIRD_PERSON_DISTANCE = 4;
+  const CAMERA_MARGIN = 0.22;
+  const cameraModes = ["一人称", "後方三人称", "正面三人称"];
+  let cameraMode = 0;
+  let localAvatar;
   const REACH = 6;
   const GRAVITY = 20.9475;
   const JUMP_SPEED = 7.8;
@@ -371,7 +381,13 @@
   function sendCurrentPlayerState() {
     emitWorldEvent("send-player-state", {
       x: player.x, y: player.y, z: player.z, yaw: player.yaw, pitch: player.pitch,
+      locomotion: playerLocomotion(),
     });
+  }
+
+  function playerLocomotion() {
+    return player.flying ? "flying" : player.grounded ? "grounded"
+      : player.velocityY > 0 ? "rising" : "falling";
   }
 
   function clearPendingEdits() {
@@ -405,6 +421,7 @@
       throw new Error("Could not restore the solo world.");
     }
     player = { ...soloSnapshot.player };
+    resetLocalAvatarMotion();
     stepViewOffset = 0;
     clearInput();
     updateFlightControls();
@@ -711,6 +728,7 @@
       player.velocityY = 0;
       player.grounded = true;
       setFlying(false);
+      resetLocalAvatarMotion();
       clearInput();
       return;
     }
@@ -1193,8 +1211,7 @@
     gl.clearColor(0.62, 0.82, 0.88, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.useProgram(program);
-    const eye = cameraEye();
-    const direction = viewDirection();
+    const { eye, direction, distance } = renderCamera();
     const viewProjection = matrixMultiply(
       perspective(Math.PI / 3, canvas.width / canvas.height, 0.08, 100),
       lookAt(eye, direction),
@@ -1209,10 +1226,10 @@
     gl.uniform1i(gl.getUniformLocation(program, "uTextured"), 0);
     gl.disableVertexAttribArray(uvAttribute);
     gl.vertexAttrib2f(uvAttribute, 0, 0);
-    renderRemotePlayers(viewProjection);
-    renderTargetOutline();
+    renderRemotePlayers(viewProjection, cameraMode !== 0 && distance > 0.8);
+    if (cameraMode === 0) renderTargetOutline();
     renderTransparentBlocks(eye, direction);
-    renderHeldBlock(viewProjection);
+    if (cameraMode === 0) renderHeldBlock(viewProjection);
     if (measureRender) lastRenderDurationMs = performance.now() - renderStartedAt;
   }
 
@@ -1361,6 +1378,7 @@
     const { width, depth, height } = worldModel.dimensions;
     return state !== null
       && typeof state === "object"
+      && globalThis.MoneycraftAvatar.locomotionStates.includes(state.locomotion)
       && Number.isFinite(state.x) && state.x >= 0 && state.x <= width
       && Number.isFinite(state.y) && state.y >= 0 && state.y <= height + 10
       && Number.isFinite(state.z) && state.z >= 0 && state.z <= depth
@@ -1398,17 +1416,15 @@
     } else {
       remote.displayName = playerInfo.displayName;
     }
-    if (playerInfo.appearance !== undefined) updateRemoteAppearance(remote, playerInfo.appearance);
+    if (playerInfo.appearance !== undefined) updateAvatarAppearance(remote, playerInfo.appearance);
     const label = getRemotePlayerLabel(playerInfo.id);
     label.textContent = playerInfo.displayName;
     label.hidden = !remote.state;
     if (!isRemotePlayerState(playerInfo.state)) return;
-    if (!remote.state) remote.state = { ...playerInfo.state };
-    remote.target = { ...playerInfo.state };
-    remote.lastStateAt = performance.now();
+    setRemoteTarget(remote, playerInfo.state);
   }
 
-  function updateRemoteAppearance(remote, appearance) {
+  function updateAvatarAppearance(remote, appearance) {
     const avatar = globalThis.MoneycraftAvatar;
     if (!avatar.isAppearance(appearance)) {
       console.error("Could not display an invalid player appearance.");
@@ -1419,6 +1435,7 @@
     if (key === remote.appearanceKey) return;
     remote.mesh = key === JSON.stringify(avatar.defaults)
       ? remoteAvatarMesh : avatar.createMesh(appearance, "soft-doll");
+    if (remote.motion) remote.motion.positions = new Float32Array(remote.mesh.positions.length);
     remote.appearanceKey = key;
     remote.labelHeight = 0;
     for (let offset = 1; offset < remote.mesh.positions.length; offset += 3) {
@@ -1475,11 +1492,24 @@
       remote = remotePlayers.get(update.playerId);
     }
     if (!remote) return;
-    if (update.appearance !== undefined) updateRemoteAppearance(remote, update.appearance);
-    remote.target = { ...update.state };
-    remote.lastStateAt = performance.now();
+    if (update.appearance !== undefined) updateAvatarAppearance(remote, update.appearance);
+    setRemoteTarget(remote, update.state);
     getRemotePlayerLabel(remote.id).hidden = false;
-    if (!remote.state) remote.state = { ...update.state };
+  }
+
+  function setRemoteTarget(remote, state) {
+    const now = performance.now();
+    const elapsed = now - remote.lastStateAt;
+    const distance = remote.target ? Math.hypot(state.x - remote.target.x, state.z - remote.target.z) : 0;
+    const reset = !remote.state || elapsed > REMOTE_MOTION_TIMEOUT || distance > 2
+      || (remote.target && Math.abs(state.y - remote.target.y) > 2);
+    if (reset) {
+      remote.state = { ...state };
+      remote.motion = createAvatarMotion(remote.mesh, state.pitch, remote.motion?.positions);
+    }
+    remote.moving = !reset && distance > 0.001;
+    remote.target = { ...state };
+    remote.lastStateAt = now;
   }
 
   function projectToCanvas(viewProjection, x, y, z) {
@@ -1496,35 +1526,99 @@
     };
   }
 
-  function appendRemoteAvatar(positions, colors, remote) {
+  function resetLocalAvatarMotion() {
+    if (!localAvatar) return;
+    localAvatar.motion = createAvatarMotion(localAvatar.mesh, player.pitch, localAvatar.motion?.positions);
+  }
+
+  function createAvatarMotion(mesh, pitch, positions = new Float32Array(mesh.positions.length)) {
+    const motion = {
+      phase: 0, strength: 0, pose: globalThis.MoneycraftAvatar.createPose("still", 0),
+      airPose: globalThis.MoneycraftAvatar.createPose("still", 0),
+      positions,
+    };
+    motion.pose[1][0] = Math.max(-0.65, Math.min(0.65, -pitch));
+    return motion;
+  }
+
+  function updateAvatarMotion(motion, state, dt, dx, dz, locomotion) {
+    if (dt <= 0) return;
+    const distance = Math.hypot(dx, dz);
+    const walking = locomotion === "grounded";
+    const strength = walking ? Math.min(1.3, distance / dt / WALK_SPEED) : 0;
+    const response = 1 - Math.exp(-12 * dt);
+    motion.strength += (strength - motion.strength) * response;
+    if (motion.strength < 0.0001) motion.strength = 0;
+    if (walking) {
+      const forward = dx * Math.sin(state.yaw) - dz * Math.cos(state.yaw);
+      motion.phase = (motion.phase + distance * Math.PI * 2 / WALK_CYCLE_DISTANCE
+        * (forward < -distance * 0.25 ? -1 : 1)) % (Math.PI * 2);
+    }
+    const swing = Math.sin(motion.phase) * 0.48 * motion.strength;
+    motion.pose[2][0] = -swing * 0.8;
+    motion.pose[3][0] = swing * 0.8;
+    motion.pose[4][0] = swing;
+    motion.pose[5][0] = -swing;
+    const airborne = locomotion === "rising" || locomotion === "falling";
+    const rising = locomotion === "rising";
+    const flying = locomotion === "flying";
+    const armPitch = flying ? -0.15 - Math.min(1, distance / dt / WALK_SPEED) * 0.2
+      : rising ? -0.3 : 0;
+    const armSpread = flying ? 0.4 : airborne ? (rising ? 0.12 : 0.3) : 0;
+    const legPitch = flying ? 0.12 : airborne ? (rising ? -0.25 : 0.1) : 0;
+    for (const joint of [2, 3, 4, 5]) {
+      const targetX = joint < 4 ? armPitch : legPitch;
+      const targetZ = joint === 2 ? -armSpread : joint === 3 ? armSpread : 0;
+      for (const [axis, target] of [[0, targetX], [2, targetZ]]) {
+        motion.airPose[joint][axis] += (target - motion.airPose[joint][axis]) * response;
+        if (Math.abs(motion.airPose[joint][axis]) < 0.0001) motion.airPose[joint][axis] = 0;
+        motion.pose[joint][axis] = (axis === 0 ? motion.pose[joint][axis] : 0)
+          + motion.airPose[joint][axis];
+      }
+    }
+    const pitch = Math.max(-0.65, Math.min(0.65, -state.pitch));
+    motion.pose[1][0] += (pitch - motion.pose[1][0]) * response;
+  }
+
+  function appendAvatar(positions, colors, remote) {
     const { state, mesh } = remote;
+    const posed = remote.motion
+      ? globalThis.MoneycraftAvatar.posePositions(mesh, remote.motion.pose, remote.motion.positions)
+      : mesh.positions;
     // The model faces +Z; movement yaw zero faces -Z.
     const yaw = Math.PI - state.yaw;
     const cosYaw = Math.cos(yaw);
     const sinYaw = Math.sin(yaw);
     for (let offset = 0; offset < mesh.positions.length; offset += 3) {
-      const x = mesh.positions[offset];
-      const y = mesh.positions[offset + 1];
-      const z = mesh.positions[offset + 2];
+      const x = posed[offset];
+      const y = posed[offset + 1];
+      const z = posed[offset + 2];
       positions.push(state.x + x * cosYaw + z * sinYaw, state.y + y,
         state.z - x * sinYaw + z * cosYaw);
       colors.push(mesh.colors[offset], mesh.colors[offset + 1], mesh.colors[offset + 2]);
     }
   }
 
-  function renderRemotePlayers(viewProjection) {
+  function renderRemotePlayers(viewProjection, showLocalAvatar = false) {
     const positions = [];
     const colors = [];
+    if (showLocalAvatar) {
+      localAvatar.state = player;
+      appendAvatar(positions, colors, localAvatar);
+    }
     const now = performance.now();
-    const interpolation = 1 - Math.exp(-12 * Math.min(1 / 30, (now - (remoteRenderTime || now)) / 1000));
+    const dt = Math.min(1 / 30, Math.max(0, (now - (remoteRenderTime ?? now)) / 1000));
+    const interpolation = 1 - Math.exp(-12 * dt);
     remoteRenderTime = now;
 
     for (const remote of remotePlayers.values()) {
-      if (!remote.lastStateAt || now - remote.lastStateAt > REMOTE_PLAYER_TIMEOUT) {
+      if (now - remote.lastStateAt > REMOTE_PLAYER_TIMEOUT) {
         removeRemotePlayer(remote.id);
         continue;
       }
       if (!remote.state || !remote.target) continue;
+      const beforeX = remote.state.x;
+      const beforeZ = remote.state.z;
       const yawDelta = Math.atan2(
         Math.sin(remote.target.yaw - remote.state.yaw),
         Math.cos(remote.target.yaw - remote.state.yaw),
@@ -1534,15 +1628,21 @@
       remote.state.z += (remote.target.z - remote.state.z) * interpolation;
       remote.state.yaw += yawDelta * interpolation;
       remote.state.pitch += (remote.target.pitch - remote.state.pitch) * interpolation;
+      const fresh = now - remote.lastStateAt <= REMOTE_MOTION_TIMEOUT;
+      const dx = fresh && remote.moving ? remote.state.x - beforeX : 0;
+      const dz = fresh && remote.moving ? remote.state.z - beforeZ : 0;
+      const scale = Math.min(1, WALK_SPEED * SPRINT_MULTIPLIER * dt / (Math.hypot(dx, dz) || 1));
+      updateAvatarMotion(remote.motion, remote.state, dt, dx * scale, dz * scale,
+        fresh ? remote.target.locomotion : "grounded");
 
       const eyeY = cameraEye()[1];
-      if (Math.hypot(remote.state.x - player.x, remote.state.z - player.z) < 0.55
+      if (cameraMode === 0 && Math.hypot(remote.state.x - player.x, remote.state.z - player.z) < 0.55
         && eyeY > remote.state.y && eyeY < remote.state.y + PLAYER_HEIGHT) {
         getRemotePlayerLabel(remote.id).hidden = true;
         continue;
       }
 
-      appendRemoteAvatar(positions, colors, remote);
+      appendAvatar(positions, colors, remote);
 
       const label = getRemotePlayerLabel(remote.id);
       const screenPosition = projectToCanvas(viewProjection, remote.state.x,
@@ -1626,6 +1726,67 @@
     return [player.x, player.y + PLAYER_HEIGHT * 0.88 + stepViewOffset, player.z];
   }
 
+  function renderCamera() {
+    const origin = cameraEye();
+    const forward = viewDirection();
+    if (cameraMode === 0) return { eye: origin, direction: forward, distance: 0 };
+    const outward = forward.map((value) => value * (cameraMode === 1 ? -1 : 1));
+    const margin = Math.max(CAMERA_MARGIN, 0.08 * Math.hypot(1, Math.tan(Math.PI / 6),
+      Math.tan(Math.PI / 6) * canvas.width / canvas.height) + 0.02);
+    let distance = THIRD_PERSON_DISTANCE;
+    const { width, depth } = worldModel.dimensions;
+    for (const [axis, limit] of [[0, width], [2, depth]]) {
+      if (outward[axis] > 0) distance = Math.min(distance, (limit - margin - origin[axis]) / outward[axis]);
+      if (outward[axis] < 0) distance = Math.min(distance, (margin - origin[axis]) / outward[axis]);
+    }
+    const end = origin.map((value, axis) => value + outward[axis] * THIRD_PERSON_DISTANCE);
+    // Sweep a padded camera through the actual block boxes, including partial shapes.
+    for (let y = Math.floor(Math.min(origin[1], end[1]) - margin);
+      y <= Math.floor(Math.max(origin[1], end[1]) + margin); y += 1) {
+      for (let z = Math.floor(Math.min(origin[2], end[2]) - margin);
+        z <= Math.floor(Math.max(origin[2], end[2]) + margin); z += 1) {
+        for (let x = Math.floor(Math.min(origin[0], end[0]) - margin);
+          x <= Math.floor(Math.max(origin[0], end[0]) + margin); x += 1) {
+          for (const box of worldModel.getBoxes(x, y, z)) {
+            let near = 0;
+            let far = distance;
+            for (let axis = 0; axis < 3; axis += 1) {
+              const cell = [x, y, z][axis];
+              const min = cell + box.min[axis] - margin;
+              const max = cell + box.max[axis] + margin;
+              if (Math.abs(outward[axis]) < 0.00000001) {
+                if (origin[axis] < min || origin[axis] > max) far = -1;
+              } else {
+                const a = (min - origin[axis]) / outward[axis];
+                const b = (max - origin[axis]) / outward[axis];
+                near = Math.max(near, Math.min(a, b));
+                far = Math.min(far, Math.max(a, b));
+              }
+            }
+            if (near <= far) distance = Math.min(distance, Math.max(0, near - 0.01));
+          }
+        }
+      }
+    }
+    distance = Math.max(0, distance);
+    return { eye: origin.map((value, axis) => value + outward[axis] * distance),
+      direction: outward.map((value) => -value), distance };
+  }
+
+  function cycleCamera() {
+    clearInput();
+    cameraMode = (cameraMode + 1) % cameraModes.length;
+    const viewing = cameraMode !== 0;
+    gameCard.classList.toggle("third-person", viewing);
+    cameraToggle.textContent = `視点：${cameraModes[cameraMode]} · V`;
+    cameraToggle.setAttribute("aria-label",
+      `視点：${cameraModes[cameraMode]}。${cameraModes[(cameraMode + 1) % cameraModes.length]}へ切替`);
+    cameraStatus.hidden = !viewing;
+    cameraStatus.textContent = viewing ? `${cameraModes[cameraMode]} · 閲覧専用（建築は一人称で）` : "";
+    for (const button of [touchMine, touchPlace, touchPick]) button.disabled = viewing;
+    message.textContent = viewing ? "三人称では移動・見回しができます。V／視点ボタンで切替" : "一人称に戻りました";
+  }
+
   function findCeilingY(nextY) {
     let ceiling = Infinity;
     const head = player.y + PLAYER_HEIGHT - 0.04;
@@ -1660,7 +1821,7 @@
       + touchMove.x));
     const length = Math.max(1, Math.hypot(forwardInput, sideInput));
     const sprinting = keys.has("KeyW") && forwardInput > 0 && (doubleTapSprint || keys.has("KeyF"));
-    const speed = 4.5 * (sprinting ? SPRINT_MULTIPLIER : 1);
+    const speed = WALK_SPEED * (sprinting ? SPRINT_MULTIPLIER : 1);
     const stepX = (Math.sin(player.yaw) * forwardInput + Math.cos(player.yaw) * sideInput) / length * speed * dt;
     const stepZ = (-Math.cos(player.yaw) * forwardInput + Math.sin(player.yaw) * sideInput) / length * speed * dt;
 
@@ -1721,6 +1882,7 @@
   }
 
   function raycast() {
+    if (cameraMode !== 0) return null;
     const direction = viewDirection();
     const origin = cameraEye();
     let x = Math.floor(player.x);
@@ -1767,7 +1929,7 @@
   }
 
   function pickBlock() {
-    if (pickerOpen) return false;
+    if (pickerOpen || cameraMode !== 0) return false;
     stopBlockAction();
     const target = raycast();
     if (!target) {
@@ -1853,6 +2015,7 @@
   }
 
   function startBlockAction(type, source, pointerId = null) {
+    if (cameraMode !== 0) return false;
     if (pickerOpen) return false;
     if (activeBlockAction) return false;
     const action = { type, source, pointerId, timer: null };
@@ -1883,8 +2046,12 @@
   window.addEventListener("moneycraft:player-left", (event) => removeRemotePlayer(event.detail?.id));
   window.addEventListener("moneycraft:player-appearance", (event) => {
     const remote = remotePlayers.get(event.detail?.playerId);
-    if (remote) updateRemoteAppearance(remote, event.detail.appearance);
+    if (remote) updateAvatarAppearance(remote, event.detail.appearance);
   });
+  window.addEventListener("moneycraft:local-appearance", (event) => {
+    if (localAvatar) updateAvatarAppearance(localAvatar, event.detail);
+  });
+  cameraToggle.addEventListener("click", cycleCamera);
   window.addEventListener("moneycraft:room-connecting", enterRoom);
   window.addEventListener("moneycraft:room-left", leaveSharedWorld);
   window.addEventListener("moneycraft:room-closed", leaveSharedWorld);
@@ -2115,6 +2282,11 @@
     prepareAudioForInteraction();
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     if (event.target.isContentEditable || event.target.tagName === "SELECT") return;
+    if (event.code === "KeyV") {
+      event.preventDefault();
+      if (!event.repeat) cycleCamera();
+      return;
+    }
     if (event.code === "KeyR") {
       event.preventDefault();
       if (!event.repeat) {
@@ -2249,7 +2421,10 @@
     }
     stepViewOffset *= Math.exp(-STEP_VIEW_RESPONSE * Math.max(0, frameInterval) / 1000);
     if (Math.abs(stepViewOffset) < 0.0001) stepViewOffset = 0;
+    const beforeX = player.x;
+    const beforeZ = player.z;
     update(dt);
+    updateAvatarMotion(localAvatar.motion, player, dt, player.x - beforeX, player.z - beforeZ, playerLocomotion());
     debugTimer += dt;
     if (debugTimer >= 0.1) {
       updateDebugIndicator();
@@ -2266,6 +2441,10 @@
 
   try {
     initializeRenderer();
+    localAvatar = { mesh: remoteAvatarMesh, appearanceKey: JSON.stringify(globalThis.MoneycraftAvatar.defaults),
+      labelHeight: remoteAvatarLabelHeight, state: player };
+    resetLocalAvatarMotion();
+    emitWorldEvent("request-local-appearance", null);
     buildHeldBlockMeshes();
     loadAudioSettings();
     loadGame();

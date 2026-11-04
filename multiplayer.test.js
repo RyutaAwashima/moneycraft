@@ -97,7 +97,7 @@ function createClient({
     socket.dispatchEvent(event);
   };
   const welcome = () => message({
-    v: 11, type: "welcome", payload: {
+    v: 12, type: "welcome", payload: {
       roomCode: "ABCD23", player: { id: "self", displayName: "Builder", appearance: avatar.defaults },
       players: [], maxPlayers: 16, world: { version: 1 }, revision: 0,
     },
@@ -110,8 +110,9 @@ test("browser protocol and JSON failures close using permitted application codes
   for (const [packet, expectedCode] of [
     [{ v: 3, type: "welcome" }, 4002],
     [{ v: 10, type: "welcome" }, 4002],
-    [{ v: 11, type: "welcome", payload: {} }, 4002],
-    [{ v: 11, type: "player-state", payload: {} }, 4002],
+    [{ v: 11, type: "welcome" }, 4002],
+    [{ v: 12, type: "welcome", payload: {} }, 4002],
+    [{ v: 12, type: "player-state", payload: {} }, 4002],
     ["{invalid", 4007],
   ]) {
     const client = createClient();
@@ -121,12 +122,37 @@ test("browser protocol and JSON failures close using permitted application codes
   }
 });
 
+test("motion state is forwarded unchanged and malformed motion is rejected in updates and rosters", () => {
+  const state = { x: 1, y: 1, z: 1, yaw: 0, pitch: 0.3, locomotion: "rising" };
+  const client = createClient();
+  client.welcome();
+  client.socket.sent.length = 0;
+  client.emit("send-player-state", state);
+  assert.deepEqual(client.socket.sent, [{ v: 12, type: "player-state", payload: state }]);
+  let received;
+  client.window.addEventListener("moneycraft:player-state", event => { received = event.detail.state; });
+  client.message({ v: 12, type: "player-state", payload: { playerId: "other", state } });
+  assert.deepEqual({ ...received }, state);
+  for (const type of ["player-state", "player-joined", "welcome"]) {
+    const invalid = createClient();
+    invalid.welcome();
+    const player = { id: "other", displayName: "Other", appearance: invalid.avatar.defaults,
+      state: { ...state, locomotion: "unknown" } };
+    invalid.message({ v: 12, type, payload: type === "player-state" ? { playerId: "other", state: player.state }
+      : type === "player-joined" ? player : {
+        roomCode: "ABCD23", player: { ...player, id: "self", state: null },
+        players: [player], maxPlayers: 16, world: {}, revision: 0,
+      } });
+    assert.equal(invalid.socket.closeCode, 4002, type);
+  }
+});
+
 test("saved appearance is sent once on entry, refreshed on return, and resent on reconnect", () => {
   const client = createClient();
   const appearance = { ...client.avatar.defaults, hair: "long", hairColor: "rose" };
   client.saved.set(client.avatar.storageKey, JSON.stringify(appearance));
   client.welcome();
-  assert.deepEqual(client.socket.sent, [{ v: 11, type: "player-appearance", payload: appearance }]);
+  assert.deepEqual(client.socket.sent, [{ v: 12, type: "player-appearance", payload: appearance }]);
   client.window.dispatchEvent(new Event("focus"));
   client.window.dispatchEvent(new Event("pageshow"));
   assert.equal(client.socket.sent.length, 1);
@@ -143,6 +169,22 @@ test("saved appearance is sent once on entry, refreshed on return, and resent on
   client.welcome();
   assert.equal(client.socket.sent.length, 3, "new welcome forces a fresh appearance send");
   assert.equal(client.saved.get(client.avatar.storageKey), JSON.stringify(Object.fromEntries(Object.entries(changed).reverse())));
+});
+
+test("saved appearance is available to the local avatar even without a room or network", () => {
+  const client = createClient({ autoJoin: false });
+  let localAppearance;
+  client.window.addEventListener("moneycraft:local-appearance", (event) => { localAppearance = event.detail; });
+  const appearance = { ...client.avatar.defaults, hair: "ponytail", hairColor: "sage" };
+  client.saved.set(client.avatar.storageKey, JSON.stringify(appearance));
+  client.emit("request-local-appearance", null);
+  assert.deepEqual(JSON.parse(JSON.stringify(localAppearance)), appearance);
+  assert.equal(client.sockets.length, 0);
+  client.saved.set(client.avatar.storageKey, "{invalid");
+  client.window.dispatchEvent(new Event("focus"));
+  assert.deepEqual(JSON.parse(JSON.stringify(localAppearance)), JSON.parse(JSON.stringify(client.avatar.defaults)));
+  assert.match(client.elements.get("#avatar-sharing-status").textContent, /既定/);
+  assert.equal(client.saved.get(client.avatar.storageKey), "{invalid");
 });
 
 test("bad or unavailable saved appearances report default use without overwriting data", () => {
@@ -164,18 +206,18 @@ test("appearance changes update roster metadata used to restore timed-out render
   const client = createClient();
   client.welcome();
   const appearance = JSON.parse(JSON.stringify(client.avatar.defaults));
-  client.message({ v: 11, type: "player-joined", payload: { id: "other", displayName: "Other", appearance } });
+  client.message({ v: 12, type: "player-joined", payload: { id: "other", displayName: "Other", appearance } });
   const changed = { ...appearance, hair: "buns" };
   let state;
   client.window.addEventListener("moneycraft:player-state", (event) => { state = event.detail; });
-  client.message({ v: 11, type: "player-appearance", payload: { playerId: "other", appearance: changed } });
-  client.message({ v: 11, type: "player-state", payload: {
-    playerId: "other", state: { x: 1, y: 1, z: 1, yaw: 0, pitch: 0 },
+  client.message({ v: 12, type: "player-appearance", payload: { playerId: "other", appearance: changed } });
+  client.message({ v: 12, type: "player-state", payload: {
+    playerId: "other", state: { x: 1, y: 1, z: 1, yaw: 0, pitch: 0, locomotion: "grounded" },
   } });
   assert.deepEqual(JSON.parse(JSON.stringify(state.appearance)), changed);
   assert.equal(state.displayName, "Other");
   assert.equal(client.socket.closeCode, undefined);
-  client.message({ v: 11, type: "player-appearance", payload: {
+  client.message({ v: 12, type: "player-appearance", payload: {
     playerId: "other", appearance: { ...changed, image: "invalid" },
   } });
   assert.equal(client.socket.closeCode, 4002);
@@ -186,7 +228,7 @@ test("invalid appearance in a welcome or join is explicitly rejected", () => {
     const client = createClient();
     client.welcome();
     const player = { id: "other", displayName: "Other", appearance: { ...client.avatar.defaults, style: "voxel" } };
-    client.message({ v: 11, type, payload: type === "welcome"
+    client.message({ v: 12, type, payload: type === "welcome"
       ? { roomCode: "ABCD23", player: { id: "self", displayName: "Builder", appearance: client.avatar.defaults },
         players: [player], maxPlayers: 16, world: {}, revision: 0 }
       : player });
@@ -231,7 +273,7 @@ test("world timeout closes the socket and emits room-left for solo restoration",
 test("failed world and position sends close without InvalidAccessError", () => {
   for (const [type, payload] of [
     ["send-block-edit", { requestId: "edit-1" }],
-    ["send-player-state", { x: 1, y: 1, z: 1, yaw: 0, pitch: 0 }],
+    ["send-player-state", { x: 1, y: 1, z: 1, yaw: 0, pitch: 0, locomotion: "grounded" }],
   ]) {
     const client = createClient();
     client.welcome();
@@ -255,7 +297,7 @@ test("room invitations contain only the room code and preserve the site path", (
   assert.match(image.src, /^data:image\/gif;base64,/);
   assert.match(image.alt, /ABCD23/);
   const original = image.src;
-  client.message({ v: 11, type: "player-joined",
+  client.message({ v: 12, type: "player-joined",
     payload: { id: "other", displayName: "Other", appearance: client.avatar.defaults } });
   assert.equal(image.src, original);
 });

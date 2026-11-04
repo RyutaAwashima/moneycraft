@@ -29,7 +29,7 @@
         <button class="workspace-tab" id="build-tab" type="button" role="tab" aria-selected="true" aria-controls="build-view" tabindex="0">建築</button>
         <button class="workspace-tab" id="room-tab" type="button" role="tab" aria-selected="false" aria-controls="room-view" tabindex="-1">部屋管理</button>
       </nav>
-      <p class="avatar-entry"><a href="./avatar.html">アバターのアトリエ</a> · 保存した外観を共同建築で共有</p>
+      <p class="avatar-entry"><a href="./avatar.html">アバターのアトリエ</a> · 保存した外観を三人称視点で確認・共同建築で共有</p>
       <p class="avatar-entry" id="avatar-sharing-status" role="status" aria-live="polite"></p>
 
       <section class="workspace-view" id="build-view" role="tabpanel" aria-labelledby="build-tab">
@@ -53,11 +53,12 @@
               <span class="sound-status" id="sound-status" role="status" aria-live="polite"></span>
             </div>
             <button class="reset-button" id="fullscreen-game" type="button" aria-pressed="false">全画面</button>
+            <button class="reset-button camera-toggle" id="camera-toggle" type="button" aria-label="視点：一人称。後方三人称へ切替">視点：一人称 · V</button>
             <button class="reset-button" id="reset-world" type="button">ワールドをリセット</button>
           </div>
         </div>
         <div class="canvas-wrap">
-          <canvas id="game" width="960" height="540" aria-label="一人称視点の3Dブロックワールド。WASDキーで移動し、マウスで視点を動かします。">
+          <canvas id="game" width="960" height="540" aria-label="3Dブロックワールド。WASDキーで移動し、マウスで視点を動かします。Vキーまたは視点ボタンで切替。三人称は閲覧専用です。">
             このゲームを遊ぶには、WebGLに対応したブラウザーが必要です。
           </canvas>
           <div class="remote-player-labels" id="remote-player-labels" aria-hidden="true"></div>
@@ -65,6 +66,7 @@
           <output class="debug-indicator" id="debug-indicator" aria-live="polite" hidden></output>
           <div class="canvas-hint" id="game-message" aria-live="polite">ゲーム画面をクリックしてスタート</div>
           <output class="flight-status" id="flight-status" aria-live="polite" hidden>飛行中</output>
+          <output class="camera-status" id="camera-status" role="status" aria-live="polite" hidden></output>
           <div class="virtual-stick" id="virtual-stick" aria-hidden="true"><span></span></div>
           <div class="touch-controls" aria-label="タッチ操作">
             <button class="touch-button touch-mine" id="touch-mine" type="button" aria-label="ブロックを掘る">掘る</button>
@@ -95,6 +97,10 @@
       </section>
 
       <section class="help-grid" aria-label="操作方法">
+        <article class="help-item">
+          <span class="help-icon" aria-hidden="true">▣</span>
+          <div><h2>自分と作品を見る</h2><p><kbd>V</kbd> または「視点」ボタンで一人称 → 後方三人称 → 正面三人称の順に切替。三人称は移動・見回しだけの閲覧専用で、採掘・設置・スポイトは使えません。自分の保存した外観を表示し、壁際ではカメラを手前へ寄せます。狭い場所で近づきすぎた場合は自分のモデルを一時的に隠します。移動の方向は身体の向きに従い、正面三人称でも変わりません。</p></div>
+        </article>
         <article class="help-item">
           <span class="help-icon" aria-hidden="true">⌨</span>
           <div><h2>歩く・飛ぶ</h2><p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> で移動。<kbd>W</kbd> を300ms以内に二度押し、または <kbd>F</kbd>＋<kbd>W</kbd> を押している間は1.5倍速でダッシュ（飛行中も対応）。二度押しダッシュは <kbd>W</kbd> を離すと解除。マウスで見回し、<kbd>Space</kbd> でジャンプ。素早く2回押すと飛行ON/OFF。飛行中は長押しで上昇、<kbd>Shift</kbd> で下降、離すと浮遊します。タッチ端末は左のパッドで移動、画面右のドラッグで見回し、ジャンプ・下降ボタンで上下移動。「全画面」でゲームだけを表示できます。</p></div>

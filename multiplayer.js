@@ -55,7 +55,7 @@
   let currentWorkName = "新しい作品";
   let currentBackups = [];
   let activePlayerCount = 0;
-  const PROTOCOL_VERSION = 11;
+  const PROTOCOL_VERSION = 12;
   const players = new Map();
   const avatar = globalThis.MoneycraftAvatar;
   const avatarSharingStatus = document.querySelector("#avatar-sharing-status");
@@ -71,12 +71,13 @@
         appearance = parsed;
       }
       avatarSharingStatus.textContent = saved === null
-        ? "保存した外観がないため、共同建築では既定の外観を使用します。"
-        : "保存した外観を共同建築で使用します。未保存の編集は反映しません。";
+        ? "保存した外観がないため、既定の外観を使用します。"
+        : "保存した外観を使用します。未保存の編集は反映しません。";
     } catch (error) {
       console.error("Could not load the saved avatar appearance.", error);
       avatarSharingStatus.textContent = "保存した外観を読み込めないため、既定の外観を使用します。元の保存データは変更していません。";
     }
+    emitRoomEvent("local-appearance", appearance);
     if (!worldReady || !activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
     const serialized = JSON.stringify(appearance, Object.keys(avatar.defaults));
     if (!force && serialized === sentAppearance) return;
@@ -86,7 +87,15 @@
 
   function isAppearancePlayer(player) {
     return player && typeof player.id === "string" && typeof player.displayName === "string"
-      && avatar.isAppearance(player.appearance);
+      && avatar.isAppearance(player.appearance)
+      && (player.state == null || isPlayerState(player.state));
+  }
+
+  function isPlayerState(state) {
+    return state && typeof state === "object" && !Array.isArray(state)
+      && Object.keys(state).length === 6
+      && ["x", "y", "z", "yaw", "pitch"].every((key) => Number.isFinite(state[key]))
+      && avatar.locomotionStates.includes(state.locomotion);
   }
 
   function selectWorkspaceTab(tabName, focus = false) {
@@ -228,7 +237,7 @@
   function sendPlayerState(event) {
     if (!worldReady || !activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
     const state = event.detail;
-    if (!state || !["x", "y", "z", "yaw", "pitch"].every((key) => Number.isFinite(state[key]))) {
+    if (!isPlayerState(state)) {
       console.error("Could not send an invalid local player state.");
       return;
     }
@@ -356,8 +365,7 @@
     if (packet.type === "player-state") {
       const update = packet.payload;
       const state = update?.state;
-      if (typeof update?.playerId !== "string" || !state
-        || !["x", "y", "z", "yaw", "pitch"].every((key) => Number.isFinite(state[key]))) {
+      if (typeof update?.playerId !== "string" || !isPlayerState(state)) {
         setStatus("プレイヤー位置の通信形式が正しくありません。", "error");
         socket.close(4002, "Invalid player state");
         return;
@@ -889,6 +897,7 @@
   roomTab.addEventListener("keydown", handleWorkspaceTabKeydown);
   selectWorkspaceTab("build");
   window.addEventListener("moneycraft:send-player-state", sendPlayerState);
+  window.addEventListener("moneycraft:request-local-appearance", () => refreshSavedAppearance());
   window.addEventListener("focus", () => refreshSavedAppearance());
   window.addEventListener("pageshow", () => refreshSavedAppearance());
   window.addEventListener("storage", (event) => {
