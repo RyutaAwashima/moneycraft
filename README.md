@@ -8,6 +8,14 @@ libraries.
 World generation, block access, and versioned world snapshots are isolated in
 `world-model.js`; rendering and input are handled by `game.js`.
 
+## Product direction
+
+Moneycraft is planned around educational multiplayer that strengthens
+collaborative building and sharing, an adventure mode shaped as a roguelike
+dungeon RPG with a stronger combat focus, and a separate camera-based
+interactive warmup. See
+[ROADMAP.md](./ROADMAP.md) for the current plan.
+
 ## Project status and work history
 
 Start with [PROGRESS.md](./PROGRESS.md) before continuing development; it records
@@ -22,6 +30,68 @@ file server.
 
 Use the **建築** and **部屋管理** tabs to switch between the game and
 multiplayer room controls. Invitation links open the room-management tab.
+
+## Motion sensing and pose run
+
+Run `node dev-server.js` and open `http://127.0.0.1:49179/motion-run.html` to try
+the [pose-run mode](./motion-run.html). HTTPS or localhost is required for
+camera access. Its dedicated block course, “ひだまりの森,” follows a curving
+route through grassland, a wooden bridge, a stone grove and a flower hill. The
+3D course is separate from the building world's saved data. Repeated side-to-side
+wrist swings move the runner forward; the detected cadence in hertz is also the
+course speed multiplier, so faster swings cover the route sooner. Five gates
+are spaced across the course for longer walking stretches. They use both arms
+raised, either arm raised alone, and either arm horizontal with the other
+raised; the T-pose is omitted from this run. Hold the requested pose for 0.7
+seconds within the five-second gate window while
+continuing forward. A visible success effect confirms a cleared pose. A missed
+gate adds one second to the score. At 1 Hz, missing every gate takes about
+1:50 including penalties; completion time varies with walking cadence.
+The gate card shows an avatar demonstrating the current pose, or the next pose
+while approaching a gate.
+Use “全画面表示” above the course for an immersive view; the camera preview
+stays in a compact panel at the lower-right of the game.
+After the camera detects an upper body in the marked area, it shows “カメラ判定
+OK！” and counts down 3, 2, 1, and “スタート！” before the run timer begins.
+If tracking is lost during the countdown, the player must return to the frame
+and the countdown starts again.
+Before the countdown, the game samples a neutral standing posture for about
+1.4 seconds. During the run, detected jumps animate the avatar; this upper-body
+estimate is experimental and may vary with camera placement. Four low block
+barriers are placed on the route; a detected jump within 0.9 seconds before
+reaching a barrier clears it, otherwise the runner records a bump. The run
+summary reports the number avoided and hit; hits do not add a time penalty.
+At the finish, the record shows elapsed run time and estimated calories using
+a 25 kg reference weight and a 3.5 MET activity assumption. This is a rough
+estimate for the child-focused prototype, not a medical measurement.
+Left and right refer to the player's anatomical sides, not the mirrored preview.
+Pose detection uses only the centered, portrait 3:4 camera area marked in the
+preview; keep one person inside this area to avoid tracking people at the sides.
+The avatar preview also mirrors a limited amount of left/right body lean; it
+does not estimate forward/backward lean. Jump is used experimentally for the
+obstacle mechanic; sneak is not used. Browsers without WebGL use the simplified
+Canvas fallback.
+
+The first course is a built-in level made from Moneycraft's block materials.
+Selecting or authoring a course from a normal or shared building world remains
+a separate future feature.
+
+The separate [motion sensor test page](./motion-test.html) is for comparing
+camera setups and tuning upper-body estimates. It displays the same six arm
+pose classifications as the run game, plus experimental jump and sneak
+detection; those estimates are not used by the pose-run MVP. Left and right
+refer to the player's anatomical sides. On both pages, camera use starts only
+after an explicit button press; frames are processed in the browser and are not
+stored or uploaded. The MediaPipe runtime and model are downloaded from jsDelivr
+and Google Cloud Storage, so an internet connection is needed. The game and
+camera test are independent of building and adventure mode.
+
+Use the [arm-swing test](./motion-arm-swing.html) to check whether repeated
+side-to-side wrist movement can act as a walking input. The live chart shows
+the normalized horizontal movement of each wrist, the detector reports swing
+cadence, and the avatar walks while a steady rhythm is detected. The pose-run
+uses the same detector for course movement; it is not connected to building
+controls.
 
 ## Avatar editor prototype
 
@@ -110,6 +180,181 @@ from the game. `node dev-server.js` serves the editor at
 The bounded appearance schema and model geometry live in `avatar-model.js`;
 `avatar-editor.js` owns the independent UI, local persistence and preview renderer.
 Run its focused checks with `node --test avatar.test.js`.
+
+## Mob editor development tool
+
+Open [mob.html](./mob.html), or follow **モブ工房（開発ツール）** from the game.
+The default is a quadruped dragon. Its torso, hips, four legs, neck, head, jaw
+and tail use shared skeleton anchors. Each wing starts behind the forelegs and
+has two connected arm segments with an elbow joint; a large diamond-shaped
+panel spans from the back to the elbow and wing tip on each side. The biped
+remains an alternate prototype.
+The wing-arm segments are 50% longer than the previous preview; the tail-side
+length of each membrane is reduced by 30%, with the panel joints following the
+extended arms. The wing roots are shifted 30% of the way from their former
+position toward the neck along the body axis.
+Use **歩行をためす** to preview a simple gait, gentle head-and-neck nod timed
+to the steps, wing flap, and tail sway, or **威嚇をためす** for a slow jaw-opening
+and head-lifting display; pause holds the current pose, and **静止姿勢に戻す**
+resets it. Animation is preview only and is not included in exported definitions
+or connected to game behavior.
+In enemy mode, **ブレス姿勢（敵のみ）** previews a three-second, one-shot motion:
+spread the front feet while keeping their soles planted, lean the body forward/down,
+lower the neck into a deeper stance while keeping the face level and aimed forward,
+absorb small backward recoil pulses during
+the hold, then return to rest. Legs blend into the body lean while ankles/soles remain
+planted. Biped prototypes spread their arms while keeping both feet still.
+Only the dragon's articulated jaw opens; other face packages retain their fixed mouths.
+Pause/resume and resetting work as before; switching to pet/baby cancels this attack.
+This is motion only: no emitted breath, hitboxes, damage, or game combat integration.
+**踏みつけ（敵のみ）** is another three-second, one-shot preview: rear up on
+planted back feet, hold briefly, swing both front feet down faster, absorb the landing
+with a body dip, then return to rest. Supporting legs blend into the body motion while
+their feet stay fixed. Wings lift slightly and the tail balances without tipping into
+the ground. Biped prototypes raise and slam their arms while both feet stay planted.
+The neck and head counter the body's tilt at their joints, keeping the face aimed
+slightly down toward the forward strike rather than up during rearing. The neck's
+share of the bend is reduced for short necks or large heads; the head joint supplies
+the remaining pitch to maintain clearance from the body.
+During the downswing, the gaze lowers toward the feet, stays down through contact
+and compression, then returns forward as the body recovers.
+It shares pause/resume, reset, enemy-only restrictions, and the same motion-only boundary.
+**尻尾薙ぎ払い（敵のみ）** previews a three-second charge → full turn → recovery.
+The mob lowers its body and spreads the front feet, winds up slightly opposite the
+turn, then pivots through 360 degrees around the front support line. Feet turn with
+the body while staying at ground height (this prototype does not use footstep IK).
+The gaze leads the turn at the neck/head joints, and the tail bends from windup
+to follow-through before returning to rest. The same pause/reset and enemy-only
+motion-only boundary applies; no attack hitboxes or damage are added.
+**翼で後退・着地** and **翼で後退・滞空** are three-second enemy previews requiring
+wings. The wings lift in a large windup, fan forward, then the mob lifts its feet
+and retreats backward. The landing variant settles at the rear position and holds;
+the hover variant smoothly transitions into a 1.5-second looping flight posture.
+The body tilts about 45 degrees, the neck bends forward and the head looks firmly down
+toward the ground. Large wing beats drive body bobbing and tail movement;
+rear legs tilt toward the tail at their roots in proportion to body pitch;
+front legs and biped arms retain their earlier angle relative to the body.
+Reset returns to the original
+position; replay starts the same motion again. Other existing attacks start from
+their original grounded pose, not from the hover endpoint.
+Changing to pet/baby or removing wings cancels the retreat. Shape edits preserve
+a paused/held endpoint if wings remain. Enemy framing reserves room for the flight
+path, keeping the camera stable during movement. No collision, hitboxes, or flight
+physics are simulated. Hover supports pause/resume and is static with reduced-motion
+preferences. Editing the shape preserves the current flight phase. The endpoint at
+`createMesh(definition, 1, "wing-retreat-hover", "enemy")` exactly matches
+`createMesh(definition, 0, "hover", "enemy")`; hover phase 0 and 1 also match.
+**空中突進・着地（大技）** connects hover to a 3.6-second windup → folded-wing
+forward dive → landing → low, decelerating ground slide → recovery. The gaze follows the forward/downward
+strike, then returns ahead after absorbing the landing. Selecting it on the ground
+first plays the wing retreat; selecting it while hovering captures the current wing
+beat so the first vertex positions match without a jump. The landed position is held
+1.2 model units plus half the torso length ahead of the original position.
+After contact, the feet and claws drag along the ground while the body stays compressed;
+the mob rises only after sliding stops. Slide distance follows the configured torso length.
+Pause/resume, reset, shape edits and
+enemy/wing restrictions also apply. This remains motion only, without attack effects,
+collision, hitboxes, damage or flight physics.
+`createMesh(definition, phase, "aerial-charge", "enemy", startHoverPhase = 0)` accepts
+the captured hover phase (0–1) as its optional fifth argument.
+### Fixed boss test arena (development tool)
+
+Open `./index.html?boss-test=1` from **ボス用テストエリア（開発ツール）** on the game page.
+The existing game renderer and player controls show one enemy-size mob in a flat,
+64×64 enclosed test area. Use **モブを1体配置／再配置** or **モブを取り除く**
+to check its lifecycle and rendering; **観察位置へ戻る** resets only the observer.
+Block placement and destruction are disabled. The arena never loads or saves the
+normal solo world and does not connect to rooms, even with a room invitation URL.
+Return to the normal game to resume building. This is a static integration prototype:
+mob movement, foot IK, mob collision, attacks, aura and persistence are not implemented.
+
+Face families are separate sculpting packages with their own controls. The
+dragon keeps its hinged jaw, teeth, side-facing eyes, horns, and head styles.
+The griffin has a feather-covered head and neck, with only its angled eyes and
+tapered raptor-style hooked beak exposed. Its feathers use the belly palette;
+cheek tufts or a crest can be added over the basic plumage. The lion/chimera has forward-facing
+eyes, a taller face, round/pointed/long ears, a voluminous mane, and exposed
+saber-style fangs; the horse has an elongated, tapered face ending in a short
+muzzle, a non-articulated jaw, and ears. Its mane runs from the back of the head
+down the neck to the start of the back, with short, standard, and long lengths
+(the existing JSON IDs `short`, `crest`, and `flowing` are retained).
+The horse muzzle is fixed rather than configurable. The standard mane is unchanged;
+the long mane is 60% longer and the short mane is 50% shorter in protruding length.
+The deep-sea creature has large solid-color eyes without white pupils or sockets.
+Its mouth options include two rows of pointed fish-inspired teeth and an octopus
+face with a raised mantle and six curling tentacles. Mouths combine independently
+with eye stalks, multiple eyes, regular gills, or giant fan-shaped gills colored
+with the body, belly, and accent palettes. These are playful fantasy designs,
+not anatomical reproductions. Only the dragon uses the jaw-opening threat animation.
+Bounded size sliders, palettes, a WebGL preview, and versioned JSON
+import/export are included. **ランダムに造形** samples the face family, all part
+choices, palettes, and sizes (60%–140% in 10% steps), updating the preview,
+editing controls, and JSON together without changing the camera or animation.
+Version 1 through 6 definitions are upgraded to version 7 on import,
+discarding the retired horse muzzle choice after validation. The
+editor also previews adult pets, babies (50% body, 70% head, 85% eyes), and giant enemies
+(1.5 square blocks of contact area per foot) next to a same-scale avatar.
+Enemy mode emits 3D black-flame particles with purple edges from the mob's body,
+head, limbs, tail, and wing arms (no additional libraries or textures).
+Emission points follow the animated mesh. Particles rise, shrink, and fade;
+depth testing hides particles behind the body, while nearer particles overlap it.
+The aura continues when the pose is paused, stops rendering while the page is hidden,
+and becomes static with reduced-motion preferences. Stage selection is preview-only and
+does not change the exported definition. Enemies returning to eggs, hatching,
+and raising pets are planned lifecycle mechanics, not implemented gameplay.
+**輪郭線・グロー** provides independent toggles, colors, outline width/opacity,
+and glow radius/strength for every stage. Dark, fire, lightning, and ice presets
+change the outline, glow, and particle colors together. Particles have their own
+toggle, body/rim colors, and opacity; the workshop still shows them only for enemies.
+Settings are preview-only
+and are not included in model JSON. The same screen-space silhouette mask follows
+the camera and animated pose, excludes the comparison avatar and internal part edges,
+and measures widths in CSS pixels rather than world units.
+The reusable `MoneycraftModelEffects` API combines all three layers. Load
+`silhouette-effect.js` before `model-effects.js`. It has no dependency on mob/avatar
+definitions, DOM controls, animation loops, or lifecycle stages.
+
+```js
+const effects = MoneycraftModelEffects;
+const settings = { ...effects.defaults, ...effects.presets.fire };
+const emitters = effects.createEmitters(mesh, 320); // non-indexed XYZ triangles
+const renderer = effects.createRenderer(gl);
+// Every frame, after clearing the default framebuffer:
+renderer.draw({
+  width, height, pixelRatio, settings,
+  mesh: animatedMesh, emitters, seconds, sizeScale: 1,
+  viewProjection, pixelsPerUnit,
+  drawMask,   // bind your model shader/attributes; draw only the target with opaque alpha
+  drawOpaque, // rebind your shader/attributes; draw the target and other opaque geometry
+});
+// When the renderer is no longer needed:
+renderer.dispose();
+```
+
+`createEmitters(mesh, count, selectTriangle)` samples surfaces by triangle area.
+The optional selector receives `(firstVertexIndex, mesh)`; parts are not required.
+Keep vertex order/topology stable during animation, rebuilding emitters after geometry
+changes. `createParticles(mesh, emitters, seconds, sizeScale)` is deterministic and
+follows the current animated surface, rather than retaining historical launch positions.
+The mesh must contain finite `positions` as an Array or Float32Array in world space.
+`viewProjection` is a column-major world-to-clip 4×4 matrix (OpenGL depth convention).
+`pixelsPerUnit` is the projected particle diameter in framebuffer pixels per world unit
+at clip W=1; perspective scales it by 1/W. `pixelRatio` keeps outline/glow widths in CSS px.
+
+The renderer handles silhouette → opaque geometry → depth-tested, back-to-front
+particles. It returns to the default framebuffer with depth test/write enabled and
+blending disabled; rebind program/attributes before subsequent draws. Settings are
+validated with `validate(settings)`; each layer can be disabled independently.
+The caller owns scheduling, reduced-motion timing, clearing, and stage restrictions.
+The workshop retains the mob-specific emitter selector through its existing aura helpers.
+The lower-level silhouette helper remains available. Particle shape/motion is currently
+a rising flame; lightning/ice presets change colors, not discharge/snow behavior.
+The
+editor does not save to the avatar profile or connect mob definitions to world
+spawning, behavior, persistence, or multiplayer yet.
+`node dev-server.js` serves the page at `http://127.0.0.1:49179/mob.html`.
+Run its schema and geometry checks with `node --test mob.test.js`.
+Include effect checks with `node --test mob.test.js silhouette-effect.test.js model-effects.test.js`.
 
 ## Controls
 

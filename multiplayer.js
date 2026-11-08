@@ -1,6 +1,12 @@
 "use strict";
 
 (() => {
+  if (globalThis.MoneycraftBossArena?.enabled) {
+    document.querySelector("#room-tab").hidden = true;
+    document.querySelector("#room-view").hidden = true;
+    document.querySelector("#world-mode").textContent = "ボス用テストエリア · 保存／共有なし";
+    return;
+  }
   const buildTab = document.querySelector("#build-tab");
   const roomTab = document.querySelector("#room-tab");
   const buildView = document.querySelector("#build-view");

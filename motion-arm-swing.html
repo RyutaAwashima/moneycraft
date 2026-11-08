@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#172b25">
+    <meta name="referrer" content="no-referrer">
+    <meta name="description" content="PCカメラで腕振りを検出し、アバターの歩行に反映するMoneycraftの検証ページ。">
+    <title>腕振り判定テスト — Moneycraft</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="stylesheet" href="./motion-arm-swing.css">
+    <script src="./avatar-model.js" defer></script>
+    <script src="./motion-sensing.js" defer></script>
+    <script src="./motion-arm-swing.js" defer></script>
+    <script src="./motion-avatar.js" defer></script>
+    <script src="./motion-arm-swing-page.js" defer></script>
+  </head>
+  <body>
+    <main class="page motion-swing-page">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="Moneycraft 建築へ戻る">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <span>moneycraft</span>
+        </a>
+        <nav class="motion-swing-nav" aria-label="モーション検証">
+          <a href="./motion-test.html">姿勢テスト</a>
+          <a href="./motion-run.html">ポーズラン</a>
+          <a href="./">建築へ戻る</a>
+        </nav>
+      </header>
+
+      <section class="motion-swing-intro" aria-labelledby="swing-title">
+        <div>
+          <p class="eyebrow">MONEYCRAFT MOTION TEST</p>
+          <h1 id="swing-title">腕振り判定テスト</h1>
+          <p>手首の横方向の振りを追跡し、リズムが続いたときにアバターが歩くか試します。</p>
+        </div>
+        <span class="motion-swing-badge">EXPERIMENT</span>
+      </section>
+
+      <p class="motion-swing-notice">
+        まずカメラに正面を向き、腕を体の横で無理のない範囲で左右に振ってください。
+        これは実際の歩行認識ではなく、腕振りを移動入力として使えるかの実験です。
+        映像はブラウザー内だけで処理し、保存・送信しません。
+      </p>
+
+      <section class="motion-swing-layout" aria-label="腕振りの検出テスト">
+        <section class="motion-swing-panel" aria-labelledby="camera-title">
+          <div class="motion-swing-heading">
+            <div>
+              <p class="motion-swing-kicker">01 / TRACKING</p>
+              <h2 id="camera-title">カメラと腕の動き</h2>
+            </div>
+            <output id="swing-camera-state">停止中</output>
+          </div>
+          <div class="motion-swing-camera" id="swing-camera-preview">
+            <video id="swing-video" autoplay muted playsinline aria-label="腕振り認識用カメラ映像"></video>
+            <canvas id="swing-overlay" aria-hidden="true"></canvas>
+            <p id="swing-camera-placeholder">カメラを開始すると映像が表示されます</p>
+          </div>
+          <div class="motion-swing-actions">
+            <button class="room-button room-create" id="swing-start" type="button">カメラを開始</button>
+            <button class="reset-button" id="swing-stop" type="button" disabled>停止</button>
+          </div>
+          <p id="swing-message" class="motion-swing-message" role="status" aria-live="polite">
+            始めるときは、頭・肩・両手首が映る位置に立ってください。
+          </p>
+          <p class="motion-swing-hint">片腕だけを振る場合も判定できます。速さより、一定のリズムで続けることを試してください。</p>
+        </section>
+
+        <section class="motion-swing-panel motion-swing-results" aria-labelledby="result-title">
+          <div class="motion-swing-heading">
+            <div>
+              <p class="motion-swing-kicker">02 / LIVE RESULT</p>
+              <h2 id="result-title">歩行判定</h2>
+            </div>
+            <output id="swing-frequency">-- Hz</output>
+          </div>
+          <div class="motion-swing-status" id="swing-status" data-active="false">
+            <span class="motion-swing-status-dot" aria-hidden="true"></span>
+            <strong id="swing-status-label">腕を振ってください</strong>
+          </div>
+          <canvas id="swing-chart" width="760" height="210" aria-label="左右の手首の横移動を示すグラフ"></canvas>
+          <div class="motion-swing-metrics">
+            <div><span>左手首</span><strong id="left-swing-metric">待機中</strong></div>
+            <div><span>右手首</span><strong id="right-swing-metric">待機中</strong></div>
+          </div>
+          <section class="motion-swing-avatar" aria-labelledby="avatar-title">
+            <div class="motion-swing-heading">
+              <h3 id="avatar-title">歩行アバター</h3>
+              <output id="swing-avatar-state">待機中</output>
+            </div>
+            <canvas id="swing-avatar" width="360" height="260" aria-label="腕振りに応じて歩くアバター">
+              WebGLに対応したブラウザーが必要です。
+            </canvas>
+          </section>
+          <p class="motion-swing-footnote">
+            判定の目安：手首の横移動が一定以上あり、方向転換が連続していること。
+            カメラの角度や距離によって反応が変わります。
+          </p>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

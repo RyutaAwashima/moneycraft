@@ -1,0 +1,182 @@
+.mob-page {
+  padding-bottom: 36px;
+}
+
+.mob-stage {
+  background: radial-gradient(ellipse at 50% 40%, #f8faf2, #e5eee2);
+}
+
+.mob-stage[data-stage="enemy"] {
+  background: radial-gradient(ellipse at 50% 45%, #ddd5e1 0%, #bcb2c6 65%, #94849f 100%);
+}
+
+#mob-preview {
+  display: block;
+  width: 100%;
+  height: clamp(320px, 42vw, 460px);
+  touch-action: none;
+  cursor: grab;
+}
+
+#mob-preview:active {
+  cursor: grabbing;
+}
+
+.mob-animation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px 4px;
+}
+
+.mob-animation-controls button[aria-pressed="true"] {
+  background: #315f4b;
+}
+
+.mob-animation-controls span {
+  color: #64746b;
+  font-size: 12px;
+}
+
+.mob-effects {
+  display: grid;
+  gap: 10px;
+  margin: 16px 18px;
+  padding: 14px;
+  border: 1px solid #dfe6dc;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.mob-effects label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.mob-effects input[type="range"] {
+  flex: 1;
+  min-width: 80px;
+  accent-color: var(--green);
+}
+
+.mob-effects p {
+  margin: 0;
+  color: #64746b;
+  line-height: 1.8;
+}
+
+#mob-controls {
+  padding: 0 18px 18px;
+}
+
+.mob-dimensions {
+  padding: 0 18px 18px;
+}
+
+.mob-dimensions .avatar-section-heading {
+  padding: 16px 0 8px;
+}
+
+.mob-dimensions h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.mob-size-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 12px;
+  clear: both;
+}
+
+.mob-size-row input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  margin: 0;
+  accent-color: var(--green);
+}
+
+.mob-size-row output {
+  color: #64746b;
+  font-size: 12px;
+  text-align: right;
+}
+
+.mob-export {
+  display: grid;
+}
+
+.mob-export-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mob-export-heading strong {
+  font-size: 14px;
+}
+
+.mob-export-heading p {
+  margin: 6px 0;
+  color: #64746b;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.mob-import-label {
+  margin-top: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#mob-import {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 6px;
+  font: inherit;
+}
+
+#mob-json {
+  width: 100%;
+  min-height: 190px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #dfe6dc;
+  border-radius: 7px;
+  background: #f8faf7;
+  color: #34443a;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
+#mob-status {
+  display: block;
+  color: #315f4b;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+#mob-status[data-error="true"] {
+  color: #a23f32;
+}
+
+.mob-page button:focus-visible,
+.mob-page input:focus-visible,
+.mob-page textarea:focus-visible,
+.mob-page a:focus-visible {
+  outline: 3px solid #52856b;
+  outline-offset: 3px;
+}
+
+@media (max-width: 700px) {
+  #mob-preview {
+    height: 340px;
+  }
+}

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#172b25">
+    <meta name="referrer" content="no-referrer">
+    <meta name="description" content="ブロックで作られた専用コースを走るMoneycraftのポーズラン。">
+    <title>ポーズラン — Moneycraft</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="stylesheet" href="./motion-run.css">
+    <script src="./avatar-model.js" defer></script>
+    <script src="./world-model.js" defer></script>
+    <script src="./motion-sensing.js" defer></script>
+    <script src="./motion-avatar.js" defer></script>
+    <script src="./motion-arm-swing.js" defer></script>
+    <script src="./motion-run-model.js" defer></script>
+    <script src="./motion-run-course.js" defer></script>
+    <script src="./motion-run-course-renderer.js" defer></script>
+    <script src="./motion-run.js" defer></script>
+  </head>
+  <body>
+    <main class="page motion-run-page">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="Moneycraft 建築へ戻る">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <span>moneycraft</span>
+        </a>
+        <nav class="motion-run-nav" aria-label="試作ページ">
+          <a href="./motion-arm-swing.html">腕振りテスト</a>
+          <a href="./motion-test.html">センサー検証</a>
+          <a href="./">建築へ戻る</a>
+        </nav>
+      </header>
+
+      <section class="motion-run-intro" aria-labelledby="run-title">
+        <div>
+          <p class="eyebrow">MONEYCRAFT POSE RUN</p>
+          <h1 id="run-title">ポーズラン</h1>
+          <p>腕をリズミカルに振ると、アバターが専用コース「ひだまりの森」を進みます。ゲートでは指定の腕ポーズをキープし、コース上の障害物はジャンプで飛び越えましょう。</p>
+        </div>
+        <span class="motion-run-prototype">専用ブロックコース</span>
+      </section>
+
+      <p class="motion-run-notice">
+        草原・木橋・石の森・花ひらく丘をつなぐ、カーブと景色の変化があるブロックコースです。腕振りの周波数が高いほど速く進みます。5つのポーズゲートに加え、ジャンプで越える障害物が4個あります。障害物に近づいたらジャンプしてください。
+        このコースは通常の建築ワールドとは別に用意され、建築データや保存内容を変更しません。ジャンプ判定は試験的な上半身推定です。スニーク判定は使いません。
+        カメラ映像はブラウザー内で処理し、保存・送信しません。
+      </p>
+
+      <section class="motion-run-layout" aria-label="ランゲームとカメラ">
+        <section class="motion-run-course-panel" id="run-game" aria-labelledby="course-title">
+          <div class="motion-run-course-heading">
+            <div>
+              <p class="motion-run-kicker">SUNLIT FOREST COURSE</p>
+              <h2 id="course-title">ひだまりの森</h2>
+            </div>
+            <div class="motion-run-game-tools">
+              <output id="run-clock" aria-label="経過時間">00:00</output>
+              <button class="reset-button motion-run-fullscreen" id="run-fullscreen" type="button" aria-pressed="false">
+                全画面表示
+              </button>
+            </div>
+          </div>
+
+          <div class="motion-run-scene" id="run-scene" data-running="false">
+            <canvas id="course-canvas" width="900" height="460" aria-label="腕振りで進み、ポーズゲートとジャンプで越える障害物があるブロックコース"></canvas>
+            <div class="motion-run-scene-hud">
+              <span id="checkpoint-counter">ゲート 0 / 5</span>
+              <span id="obstacle-counter">障害物 0 / 4</span>
+              <span id="course-state">腕振りで歩き始めてください</span>
+            </div>
+            <div class="motion-run-task" id="run-task" aria-live="polite">
+              <div class="motion-run-task-copy">
+                <span id="task-number">準備中</span>
+                <strong id="task-prompt">腕を振って歩こう！</strong>
+                <span id="task-timer"></span>
+              </div>
+              <div class="motion-run-pose-guide">
+                <span>お手本</span>
+                <canvas id="pose-guide-avatar" width="160" height="180" aria-label="お手本アバター"></canvas>
+                <span id="pose-guide-status" hidden>ポーズのお手本を表示できません。</span>
+              </div>
+            </div>
+            <div class="motion-run-feedback" id="run-feedback" data-type="success" hidden aria-live="polite" aria-atomic="true"></div>
+            <section class="motion-run-camera-panel" aria-labelledby="camera-title">
+              <div class="motion-run-side-heading">
+                <div>
+                  <p class="motion-run-kicker">CAMERA TRACKING</p>
+                  <h2 id="camera-title">ポーズ認識</h2>
+                </div>
+                <output id="camera-state">停止中</output>
+              </div>
+              <div class="motion-run-camera" id="camera-preview">
+                <video id="run-video" autoplay muted playsinline aria-label="カメラ映像"></video>
+                <canvas id="run-overlay" aria-hidden="true"></canvas>
+                <p id="camera-placeholder">中央の縦長枠に一人で映ってください</p>
+              </div>
+              <p class="motion-run-camera-hint">中央の縦長枠だけを判定します。枠の中に一人で立ち、両腕を映してください。</p>
+              <div class="motion-run-pose-status">
+                <span id="walk-state">歩行：腕を振ってください</span>
+                <span id="walk-frequency">頻度 -- Hz · 速度 --x</span>
+                <span id="jump-state">ジャンプ：待機</span>
+                <span id="arms-up-state">両手上げ：待機</span>
+                <span id="left-arm-up-state">本人の左腕上げ：待機</span>
+                <span id="right-arm-up-state">本人の右腕上げ：待機</span>
+                <span id="right-horizontal-left-up-state">本人の右腕水平・左腕上げ：待機</span>
+                <span id="left-horizontal-right-up-state">本人の左腕水平・右腕上げ：待機</span>
+                <span id="t-pose-state">T字ポーズ：待機</span>
+              </div>
+            </section>
+          </div>
+
+          <div class="motion-run-progress" role="progressbar" aria-label="コース進行" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="course-progress"></span>
+          </div>
+          <div class="motion-run-stats" aria-label="ランの記録">
+            <span>クリア <strong id="cleared-count">0</strong></span>
+            <span>未達 <strong id="missed-count">0</strong></span>
+            <span>スコア <strong id="score-time">--:--</strong></span>
+          </div>
+
+          <div class="motion-run-actions">
+            <button class="room-button room-create" id="run-start" type="button">カメラを準備して歩行テスト開始</button>
+            <button class="reset-button" id="run-stop" type="button" disabled>ランを中止</button>
+            <button class="reset-button" id="run-reset" type="button" disabled>もう一度走る</button>
+          </div>
+          <p class="motion-run-status" id="run-status" role="status" aria-live="polite">
+            開始するとカメラの許可を確認します。明るい場所で上半身と両腕を映してください。
+          </p>
+          <section class="motion-run-result" id="run-result" hidden aria-labelledby="result-title">
+            <h3 id="result-title">ランの記録</h3>
+            <div class="motion-run-result-stats">
+              <p><span>記録タイム</span><strong id="result-time">--:--</strong></p>
+              <p><span>推定消費カロリー</span><strong id="result-calories">-- kcal</strong></p>
+            </div>
+            <p id="result-summary"></p>
+          </section>
+        </section>
+
+        <aside class="motion-run-side">
+          <section class="motion-run-avatar-panel" aria-labelledby="avatar-title">
+            <div class="motion-run-side-heading">
+              <div>
+                <p class="motion-run-kicker">RUNNER</p>
+                <h2 id="avatar-title">アバター</h2>
+              </div>
+              <output id="avatar-state">準備中</output>
+            </div>
+            <canvas id="run-avatar" width="360" height="280" aria-label="ポーズを反映するアバター">
+              WebGLに対応したブラウザーが必要です。
+            </canvas>
+          </section>
+
+          <p class="motion-run-privacy">
+            映像はこのブラウザー内だけで処理され、ラン終了時にカメラを停止します。
+            姿勢推定ライブラリとモデルの読み込みにはインターネット接続が必要です。
+          </p>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

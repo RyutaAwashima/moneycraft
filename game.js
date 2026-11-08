@@ -30,6 +30,9 @@
   const remotePlayerLabels = document.querySelector("#remote-player-labels");
   const cameraToggle = document.querySelector("#camera-toggle");
   const cameraStatus = document.querySelector("#camera-status");
+  const bossArena = globalThis.MoneycraftBossArena;
+  const bossTest = Boolean(bossArena?.enabled);
+  let bossEntity = null;
   if (!gl) {
     message.textContent = "このブラウザーではWebGLを利用できません";
     saveState.textContent = "WebGL対応ブラウザーが必要です";
@@ -253,7 +256,8 @@
   const { getBlockBounds, getBlockBoxes, getStairOutline, orientationFromFacing,
     slabOrientationForPlacement, canMergeSlab, upperSlabOrientation,
     stairShapes, shapeAffectedCells, isBlockOrientation } = globalThis.MoneycraftWorld;
-  let worldModel = globalThis.MoneycraftWorld.createModel(globalThis.MoneycraftWorld.defaultOptions);
+  let worldModel = bossTest ? bossArena.createWorld()
+    : globalThis.MoneycraftWorld.createModel(globalThis.MoneycraftWorld.defaultOptions);
   const keys = new Set();
   const touchPointers = new Map();
   const touchMove = { x: 0, z: 0 };
@@ -369,7 +373,8 @@
 
   function updateWorldLabel() {
     const { width, depth } = worldModel.dimensions;
-    document.querySelector("#world-label").textContent = worldModel.terrain === "forest-plains"
+    document.querySelector("#world-label").textContent = bossTest ? `ボス用テストエリア · ${width}×${depth}`
+      : worldModel.terrain === "forest-plains"
       ? `草原と森 · ${width}×${depth}`
       : `ひだまりの丘 · ${width}×${depth}`;
   }
@@ -379,6 +384,7 @@
   }
 
   function sendCurrentPlayerState() {
+    if (bossTest) return;
     emitWorldEvent("send-player-state", {
       x: player.x, y: player.y, z: player.z, yaw: player.yaw, pitch: player.pitch,
       locomotion: playerLocomotion(),
@@ -528,6 +534,10 @@
   }
 
   function changeBlock(x, y, z, block, orientation = 0) {
+    if (bossTest) {
+      message.textContent = "ボス用テストエリアではブロックの設置・破壊はできません";
+      return false;
+    }
     if (roomMode === "connecting" || awaitingSnapshot) {
       message.textContent = "共有ワールドの読み込み完了を待ってください";
       return false;
@@ -736,6 +746,11 @@
   }
 
   function loadGame() {
+    if (bossTest) {
+      player = { ...player, x: 32, y: 6, z: 55, yaw: 0, pitch: -0.16 };
+      bossEntity = bossArena.createEntity();
+      return;
+    }
     try {
       const saved = localStorage.getItem(SAVE_KEY);
       if (saved) {
@@ -758,7 +773,7 @@
   }
 
   function saveGame() {
-    if (roomMode !== "solo") return;
+    if (bossTest || roomMode !== "solo") return;
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         world: worldModel.serialize(),
@@ -1602,6 +1617,10 @@
   function renderRemotePlayers(viewProjection, showLocalAvatar = false) {
     const positions = [];
     const colors = [];
+    if (bossEntity) {
+      for (const value of bossEntity.mesh.positions) positions.push(value);
+      for (const value of bossEntity.mesh.colors) colors.push(value);
+    }
     if (showLocalAvatar) {
       localAvatar.state = player;
       appendAvatar(positions, colors, localAvatar);
@@ -2040,34 +2059,36 @@
     activeBlockAction = null;
   }
 
-  window.addEventListener("moneycraft:room-joined", receiveRoomJoined);
-  window.addEventListener("moneycraft:player-joined", receivePlayerJoined);
-  window.addEventListener("moneycraft:player-state", receivePlayerState);
-  window.addEventListener("moneycraft:player-left", (event) => removeRemotePlayer(event.detail?.id));
-  window.addEventListener("moneycraft:player-appearance", (event) => {
-    const remote = remotePlayers.get(event.detail?.playerId);
-    if (remote) updateAvatarAppearance(remote, event.detail.appearance);
-  });
-  window.addEventListener("moneycraft:local-appearance", (event) => {
-    if (localAvatar) updateAvatarAppearance(localAvatar, event.detail);
-  });
+  if (!bossTest) {
+    window.addEventListener("moneycraft:room-joined", receiveRoomJoined);
+    window.addEventListener("moneycraft:player-joined", receivePlayerJoined);
+    window.addEventListener("moneycraft:player-state", receivePlayerState);
+    window.addEventListener("moneycraft:player-left", (event) => removeRemotePlayer(event.detail?.id));
+    window.addEventListener("moneycraft:player-appearance", (event) => {
+      const remote = remotePlayers.get(event.detail?.playerId);
+      if (remote) updateAvatarAppearance(remote, event.detail.appearance);
+    });
+    window.addEventListener("moneycraft:local-appearance", (event) => {
+      if (localAvatar) updateAvatarAppearance(localAvatar, event.detail);
+    });
+    window.addEventListener("moneycraft:room-connecting", enterRoom);
+    window.addEventListener("moneycraft:room-left", leaveSharedWorld);
+    window.addEventListener("moneycraft:room-closed", leaveSharedWorld);
+    window.addEventListener("moneycraft:block-changed", receiveBlockChanged);
+    window.addEventListener("moneycraft:world-snapshot", receiveWorldSnapshot);
+    window.addEventListener("moneycraft:edit-rejected", receiveEditRejected);
+    window.addEventListener("moneycraft:world-send-failed", () => {
+      stopBlockAction();
+      clearPendingEdits();
+      message.textContent = "共有ワールドの通信に失敗しました。再参加してください";
+    });
+    window.addEventListener("moneycraft:room-error", () => {
+      if (awaitingSnapshot) {
+        message.textContent = "再同期に失敗しました。部屋コードで再参加してください";
+      }
+    });
+  }
   cameraToggle.addEventListener("click", cycleCamera);
-  window.addEventListener("moneycraft:room-connecting", enterRoom);
-  window.addEventListener("moneycraft:room-left", leaveSharedWorld);
-  window.addEventListener("moneycraft:room-closed", leaveSharedWorld);
-  window.addEventListener("moneycraft:block-changed", receiveBlockChanged);
-  window.addEventListener("moneycraft:world-snapshot", receiveWorldSnapshot);
-  window.addEventListener("moneycraft:edit-rejected", receiveEditRejected);
-  window.addEventListener("moneycraft:world-send-failed", () => {
-    stopBlockAction();
-    clearPendingEdits();
-    message.textContent = "共有ワールドの通信に失敗しました。再参加してください";
-  });
-  window.addEventListener("moneycraft:room-error", () => {
-    if (awaitingSnapshot) {
-      message.textContent = "再同期に失敗しました。部屋コードで再参加してください";
-    }
-  });
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
   canvas.addEventListener("auxclick", (event) => {
@@ -2396,6 +2417,20 @@
     saveAudioSettings();
   });
   resetButton.addEventListener("click", () => {
+    if (bossTest) {
+      clearInput();
+      setFlying(false);
+      player.x = 32;
+      player.y = 6;
+      player.z = 55;
+      player.yaw = 0;
+      player.pitch = -0.16;
+      player.velocityY = 0;
+      stepViewOffset = 0;
+      resetLocalAvatarMotion();
+      message.textContent = "テストエリアの観察位置に戻りました";
+      return;
+    }
     if (roomMode !== "solo") return;
     if (!window.confirm("ひとり用ワールドを新しい64×64の草原と森に置き換えますか？今の建築は削除されます。")) return;
     worldModel = globalThis.MoneycraftWorld.createModel({
@@ -2452,6 +2487,29 @@
     updateWorldLabel();
     buildHotbar();
     rebuildWorldMesh();
+    if (bossTest) {
+      document.querySelector("#boss-test-controls").hidden = false;
+      document.querySelector("#game-title").textContent = "巨大モブのテストエリア";
+      document.querySelector(".intro-copy").textContent = "地形固定のエリアを歩き、巨大モブの大きさと描画負荷を確認します。";
+      saveState.textContent = "開発用：保存／共有なし";
+      resetButton.textContent = "観察位置へ戻る";
+      touchMine.disabled = true;
+      touchPlace.disabled = true;
+      document.querySelector("#boss-test-spawn").addEventListener("click", () => {
+        try {
+          bossEntity = bossArena.createEntity();
+          message.textContent = "テストモブを1体配置しました";
+        } catch (error) {
+          console.error("Test mob could not be created.", error);
+          message.textContent = "テストモブを配置できませんでした";
+        }
+      });
+      document.querySelector("#boss-test-remove").addEventListener("click", () => {
+        bossEntity = null;
+        message.textContent = "テストモブを取り除きました";
+      });
+      message.textContent = "ボス用テストエリア：設置・破壊不可。モブは静止表示です";
+    }
     if (window.matchMedia?.("(any-pointer: coarse)").matches) enableTouchControls();
     window.setInterval(sendCurrentPlayerState, PLAYER_STATE_INTERVAL_MS);
     window.requestAnimationFrame(frame);

@@ -65,7 +65,7 @@ function createClient({
   if (savedAppearance !== null) saved.set("moneycraft-avatar-prototype-v1",
     typeof savedAppearance === "string" ? savedAppearance : JSON.stringify(savedAppearance));
   const context = {
-    window, document, WebSocket: Socket, CustomEvent, URL,
+    window, document, WebSocket: Socket, CustomEvent, URL, URLSearchParams, location: window.location,
     fetch: fetchImpl,
     localStorage: { getItem(key) {
       if (appearanceReadFailure) throw new Error("Storage unavailable");
@@ -80,6 +80,7 @@ function createClient({
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "avatar-model.js"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "boss-arena.js"), "utf8"), context);
   const avatar = context.MoneycraftAvatar;
   if (qrAvailable) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "vendor/qrcode.js"), "utf8"), context);
@@ -105,6 +106,20 @@ function createClient({
   const emit = (type, detail) => window.dispatchEvent(new CustomEvent(`moneycraft:${type}`, { detail }));
   return { socket, sockets, message, welcome, emit, elements, window, sessions, saved, avatar };
 }
+
+test("boss test area disables room management and ignores invitation autojoin", () => {
+  let requests = 0;
+  const client = createClient({
+    href: "https://example.test/moneycraft/?boss-test=1&room=ABCD23",
+    autoJoin: false,
+    fetchImpl: async () => { requests++; throw new Error("Arena must remain offline"); },
+  });
+  assert.equal(client.elements.get("#room-tab").hidden, true);
+  assert.equal(client.elements.get("#room-view").hidden, true);
+  assert.equal(client.sockets.length, 0);
+  assert.equal(requests, 0);
+  assert.match(client.elements.get("#world-mode").textContent, /保存／共有なし/);
+});
 
 test("browser protocol and JSON failures close using permitted application codes", () => {
   for (const [packet, expectedCode] of [

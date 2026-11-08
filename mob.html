@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#172b25">
+    <meta name="referrer" content="no-referrer">
+    <title>モブ工房 — Moneycraft 開発ツール</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="stylesheet" href="./avatar.css">
+    <link rel="stylesheet" href="./mob.css">
+    <script src="./silhouette-effect.js" defer></script>
+    <script src="./model-effects.js" defer></script>
+    <script src="./mob-model.js" defer></script>
+    <script src="./avatar-model.js" defer></script>
+    <script src="./mob-editor.js" defer></script>
+  </head>
+  <body>
+    <main class="page avatar-page mob-page">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="Moneycraft 建築へ戻る"><span class="brand-mark" aria-hidden="true">M</span><span>moneycraft</span></a>
+        <a class="avatar-back" href="./">建築へ戻る</a>
+      </header>
+      <section class="avatar-intro" aria-labelledby="mob-title">
+        <div><p class="eyebrow">MONEYCRAFT DEV TOOL</p><h1 id="mob-title">モブ工房</h1>
+          <p>ワールドに登場するモブの見た目を組み立てる開発用ツール。</p></div>
+        <span class="avatar-prototype">DEVELOPMENT TOOL</span>
+      </section>
+      <p class="avatar-boundary">顔系統ごとに異なる造形と専用パラメータを持つモブを試作できます。ドラゴンは開閉する顎と牙、ライオンは正面向きの目、馬は開閉しない顎とたてがみなどを個別に調整します。ここで作る定義は試作データで、ゲームへの出現・行動・保存・通信にはまだ接続されません。</p>
+      <div class="avatar-layout">
+        <section class="avatar-preview" aria-labelledby="mob-preview-title">
+          <div class="avatar-section-heading"><h2 id="mob-preview-title">3Dプレビュー</h2><span>ドラッグで回転できます</span></div>
+          <div class="mob-animation-controls" role="group" aria-label="モブの成長・状態">
+            <button type="button" class="reset-button" data-stage="enemy" aria-pressed="false">敵（巨大・オーラ）</button>
+            <button type="button" class="reset-button" data-stage="pet" aria-pressed="true">ペット（成体）</button>
+            <button type="button" class="reset-button" data-stage="baby" aria-pressed="false">赤ちゃん</button>
+          </div>
+          <p class="avatar-boundary" id="mob-scale-info" role="status"></p>
+          <div class="avatar-stage mob-stage">
+            <canvas id="mob-preview" width="600" height="640" aria-label="編集中のモブ。ドラッグで回転できます。">
+              3DプレビューにはWebGL対応ブラウザーが必要です。
+            </canvas>
+            <span class="avatar-stage-note" aria-hidden="true">ドラッグして、ぐるっと確認</span>
+          </div>
+          <div class="mob-animation-controls" role="group" aria-label="モブのアニメーション">
+            <button type="button" class="room-button room-create" id="mob-animation-toggle" aria-pressed="false">歩行をためす</button>
+            <button type="button" class="reset-button" id="mob-animation-roar" aria-pressed="false">威嚇をためす</button>
+            <button type="button" class="reset-button" id="mob-animation-breath" aria-pressed="false" disabled>ブレス姿勢（敵のみ）</button>
+            <button type="button" class="reset-button" id="mob-animation-stomp" aria-pressed="false" disabled>踏みつけ（敵のみ）</button>
+            <button type="button" class="reset-button" id="mob-animation-tail-sweep" aria-pressed="false" disabled>尻尾薙ぎ払い（敵のみ）</button>
+            <button type="button" class="reset-button" id="mob-animation-wing-land" aria-pressed="false" disabled>翼で後退・着地</button>
+            <button type="button" class="reset-button" id="mob-animation-wing-hover" aria-pressed="false" disabled>翼で後退・滞空</button>
+            <button type="button" class="reset-button" id="mob-animation-aerial-charge" aria-pressed="false" disabled>空中突進・着地（大技）</button>
+            <button type="button" class="reset-button" id="mob-animation-reset">静止姿勢に戻す</button>
+            <span>飛行モーションは敵・翼あり限定。滞空は体を約45度に傾け、地面を見ながら1.5秒周期で羽ばたきます。大技は滞空からタメ・翼を畳んで突進・着地。沈んだまま胴体半分ほど前へ引きずり、減速してから起き上がります。地上から選ぶと翼で後退してから発動し、滞空中なら現在の姿勢からつながります。一時停止できます。着地先の姿勢を保持し、静止姿勢に戻すと元の位置へ戻ります。攻撃エフェクト・当たり判定はありません。</span>
+          </div>
+          <div class="avatar-view-controls">
+            <label for="mob-yaw">回転 <output id="mob-yaw-value">20°</output></label>
+            <input id="mob-yaw" type="range" min="-180" max="180" step="1" value="20">
+            <label for="mob-pitch">見下ろし <output id="mob-pitch-value">10°</output></label>
+            <input id="mob-pitch" type="range" min="-20" max="35" step="1" value="10">
+            <label for="mob-zoom">拡大 <output id="mob-zoom-value">100%</output></label>
+            <input id="mob-zoom" type="range" min="75" max="125" step="5" value="100">
+            <button type="button" class="reset-button" id="mob-front">正面から見る</button>
+          </div>
+          <fieldset class="mob-effects" id="mob-effects">
+            <legend>エフェクト（プレビュー専用）</legend>
+            <label>属性の配色 <select id="mob-effect-preset">
+              <option value="dark">禍々しいオーラ</option>
+              <option value="fire">炎</option>
+              <option value="lightning">雷</option>
+              <option value="ice">氷</option>
+              <option value="custom">カスタム</option>
+            </select></label>
+            <label><input type="checkbox" data-effect="outlineEnabled" checked>輪郭線を表示</label>
+            <label>輪郭線の色 <input type="color" data-effect="outlineColor" value="#08050d"></label>
+            <label>太さ（画面上のpx）<input type="range" data-effect="outlineWidth" min="1" max="8" step="1" value="2"><output>2</output></label>
+            <label>不透明度 <input type="range" data-effect="outlineOpacity" min="0" max="1" step="0.05" value="0.9"><output>0.9</output></label>
+            <label><input type="checkbox" data-effect="glowEnabled" checked>外側のグローを表示</label>
+            <label>グローの色 <input type="color" data-effect="glowColor" value="#69418c"></label>
+            <label>広がり（画面上のpx）<input type="range" data-effect="glowRadius" min="1" max="40" step="1" value="18"><output>18</output></label>
+            <label>強さ <input type="range" data-effect="glowStrength" min="0" max="1" step="0.05" value="0.8"><output>0.8</output></label>
+            <label><input type="checkbox" data-effect="particlesEnabled" checked>体表パーティクルを表示（敵のみ）</label>
+            <label>粒子の色 <input type="color" data-effect="particleColor" value="#030206"></label>
+            <label>粒子の縁の色 <input type="color" data-effect="particleRimColor" value="#63387d"></label>
+            <label>粒子の不透明度 <input type="range" data-effect="particleOpacity" min="0" max="1" step="0.05" value="1"><output>1</output></label>
+            <p>輪郭線・グローは全ての状態で外周だけに適用します。粒子は敵で表示します。属性の配色は三つのエフェクトへまとめて適用します（粒子の形・動きは炎のままです）。</p>
+          </fieldset>
+        </section>
+        <section class="avatar-customize" aria-labelledby="mob-customize-title">
+          <div class="avatar-section-heading"><h2 id="mob-customize-title">モブを編集</h2><span>選択式の試作パーツ</span></div>
+          <button type="button" class="room-button room-create" id="mob-random">ランダムに造形</button>
+          <div id="mob-controls"></div>
+          <div class="mob-dimensions" id="mob-size-controls">
+            <div class="avatar-section-heading"><h3>大きさを調整</h3><span>60%〜140%</span></div>
+          </div>
+        </section>
+      </div>
+      <section class="avatar-save-panel mob-export" aria-labelledby="mob-export-title">
+        <div class="mob-export-heading">
+          <div><strong id="mob-export-title">定義データ</strong>
+            <p>編集内容をJSONとして取り出したり、保存済みの定義を読み込んだりできます。以前のversion 1〜6定義も読み込むと新形式へ変換します。</p></div>
+          <div class="avatar-save-actions">
+            <button type="button" class="reset-button" id="mob-reset">初期状態に戻す</button>
+            <button type="button" class="reset-button" id="mob-copy">JSONをコピー</button>
+            <button type="button" class="room-button room-create" id="mob-download">JSONを保存</button>
+          </div>
+        </div>
+        <label class="mob-import-label" for="mob-import">定義JSONを読み込む</label>
+        <input id="mob-import" type="file" accept=".json,application/json">
+        <textarea id="mob-json" aria-label="モブ定義JSON" readonly spellcheck="false"></textarea>
+        <output id="mob-status" role="status" aria-live="polite">初期のモブを表示しています。</output>
+      </section>
+    </main>
+  </body>
+</html>

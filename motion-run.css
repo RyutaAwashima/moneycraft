@@ -1,0 +1,717 @@
+.motion-run-page {
+  padding-bottom: 36px;
+}
+
+.motion-run-nav {
+  display: flex;
+  gap: 18px;
+}
+
+.motion-run-nav a {
+  color: #315f4b;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.motion-run-intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 36px 0 20px;
+}
+
+.motion-run-intro h1 {
+  margin: 0;
+  color: #203b30;
+  font-size: clamp(26px, 4vw, 38px);
+}
+
+.motion-run-intro p:last-child {
+  max-width: 680px;
+  margin: 12px 0 0;
+  color: #64746b;
+  line-height: 1.7;
+}
+
+.motion-run-prototype {
+  flex: none;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border: 1px solid #d5e0d4;
+  border-radius: 999px;
+  color: #456b55;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.motion-run-notice {
+  margin: 0 0 20px;
+  padding: 12px 15px;
+  border-left: 3px solid #86a990;
+  background: #edf3e9;
+  color: #52665a;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.motion-run-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.7fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.motion-run-course-panel,
+.motion-run-camera-panel,
+.motion-run-avatar-panel {
+  min-width: 0;
+  padding: 17px;
+  border: 1px solid #e0e7dc;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(37, 61, 48, 0.045);
+}
+
+.motion-run-camera-panel {
+  position: absolute;
+  z-index: 3;
+  right: 14px;
+  bottom: 14px;
+  width: clamp(150px, 26%, 260px);
+  max-height: calc(100% - 28px);
+  overflow: auto;
+  padding: 10px;
+  border-color: rgba(235, 242, 232, 0.9);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 6px 24px rgba(17, 35, 25, 0.35);
+}
+
+.motion-run-camera-panel .motion-run-side-heading {
+  margin-bottom: 6px;
+}
+
+.motion-run-camera-panel .motion-run-kicker {
+  display: none;
+}
+
+.motion-run-camera-panel .motion-run-side-heading h2 {
+  font-size: 12px;
+}
+
+.motion-run-camera-panel .motion-run-side-heading output {
+  font-size: 9px;
+}
+
+.motion-run-camera-panel .motion-run-camera-hint,
+.motion-run-camera-panel .motion-run-pose-status span:nth-child(n + 4) {
+  display: none;
+}
+
+.motion-run-camera-panel .motion-run-pose-status {
+  grid-template-columns: 1fr auto;
+  gap: 3px 6px;
+  margin-top: 5px;
+  font-size: 9px;
+}
+
+.motion-run-course-heading,
+.motion-run-side-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.motion-run-course-heading {
+  margin-bottom: 13px;
+}
+
+.motion-run-game-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.motion-run-fullscreen {
+  min-height: 34px;
+  padding: 6px 10px;
+  color: #315f4b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.motion-run-kicker {
+  margin: 0 0 5px;
+  color: #829087;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.motion-run-course-heading h2,
+.motion-run-side-heading h2 {
+  margin: 0;
+  color: #263d31;
+  font-size: 16px;
+}
+
+.motion-run-course-heading output {
+  color: #315f4b;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.motion-run-scene {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  border: 1px solid #d9e3d5;
+  border-radius: 8px;
+  background: #d7eddf;
+}
+
+#course-canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 900 / 460;
+}
+
+.motion-run-scene-hud {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  left: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-shadow: 0 1px 4px rgba(17, 44, 30, 0.75);
+}
+
+.motion-run-feedback[data-type="obstacle-hit"] {
+  border-color: rgba(255, 242, 226, 0.96);
+  background: linear-gradient(135deg, #ffe2bd, #e99a76);
+  box-shadow: 0 0 0 8px rgba(255, 201, 153, 0.25), 0 10px 32px rgba(91, 47, 34, 0.35);
+  color: #713823;
+}
+
+.motion-run-task {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 78px;
+  align-items: center;
+  min-width: min(290px, calc(100% - 32px));
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 8px;
+  background: rgba(24, 50, 37, 0.84);
+  color: #fff;
+  transform: translateX(-50%);
+}
+
+.motion-run-task[data-active="false"] {
+  background: rgba(24, 50, 37, 0.68);
+}
+
+.motion-run-task-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  text-align: center;
+}
+
+.motion-run-task-copy span {
+  color: #c9e8d0;
+  font-size: 10px;
+}
+
+.motion-run-task-copy strong {
+  font-size: 14px;
+}
+
+.motion-run-task[data-active="true"] .motion-run-task-copy strong {
+  color: #fff0a8;
+}
+
+.motion-run-pose-guide {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(219, 242, 219, 0.4);
+  border-radius: 6px;
+  background: rgba(234, 248, 226, 0.12);
+}
+
+.motion-run-pose-guide > span:first-child {
+  color: #d7edcf;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+#pose-guide-avatar {
+  display: block;
+  width: 70px;
+  height: 74px;
+}
+
+#pose-guide-status {
+  padding: 4px;
+  color: #ffe4c7;
+  font-size: 9px;
+  text-align: center;
+}
+
+#pose-guide-status[hidden] {
+  display: none;
+}
+
+.motion-run-feedback {
+  position: absolute;
+  z-index: 2;
+  top: 57%;
+  left: 50%;
+  padding: 14px 24px;
+  border: 2px solid rgba(255, 255, 255, 0.94);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #fff8cc, #8ee4a3);
+  box-shadow: 0 0 0 8px rgba(255, 245, 172, 0.25), 0 10px 32px rgba(30, 78, 47, 0.35);
+  color: #174e34;
+  font-size: clamp(18px, 3vw, 28px);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-shadow: 0 1px 0 #fff;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.motion-run-feedback[hidden] {
+  display: none;
+}
+
+.motion-run-feedback[data-type="walk"] {
+  border-color: rgba(235, 255, 242, 0.95);
+  background: linear-gradient(135deg, #e0fff0, #9bdcc4);
+  box-shadow: 0 0 0 7px rgba(196, 255, 224, 0.22), 0 10px 28px rgba(25, 68, 51, 0.3);
+}
+
+.motion-run-feedback[data-type="countdown"] {
+  min-width: 1.8em;
+  padding: 18px 30px;
+  border-color: rgba(255, 255, 255, 0.96);
+  background: linear-gradient(135deg, #fff8cc, #a4e8ac);
+  box-shadow: 0 0 0 10px rgba(255, 245, 172, 0.28), 0 12px 36px rgba(30, 78, 47, 0.4);
+  font-size: clamp(30px, 7vw, 58px);
+}
+
+.motion-run-feedback::before,
+.motion-run-feedback::after {
+  position: absolute;
+  color: #fff4a8;
+  font-size: 24px;
+  text-shadow: 0 1px 5px rgba(64, 87, 30, 0.45);
+  content: "✦";
+}
+
+.motion-run-feedback::before {
+  top: -13px;
+  left: -14px;
+}
+
+.motion-run-feedback::after {
+  right: -14px;
+  bottom: -11px;
+}
+
+.motion-run-feedback-pop {
+  animation: motion-run-feedback-pop 1.8s ease-out both;
+}
+
+@keyframes motion-run-feedback-pop {
+  0% { opacity: 0; transform: translate(-50%, -35%) scale(0.65); }
+  18% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  32% { transform: translate(-50%, -50%) scale(1); }
+  82% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -62%) scale(0.96); }
+}
+
+.motion-run-progress {
+  overflow: hidden;
+  height: 9px;
+  margin: 13px 0 10px;
+  border-radius: 99px;
+  background: #e8eee5;
+}
+
+.motion-run-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6bb67c, #328358);
+  transition: width 100ms linear;
+}
+
+.motion-run-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #708075;
+  font-size: 11px;
+}
+
+.motion-run-stats strong {
+  margin-left: 4px;
+  color: #315f4b;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.motion-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.motion-run-actions button {
+  min-height: 38px;
+}
+
+.motion-run-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.motion-run-status {
+  min-height: 2.8em;
+  margin: 10px 0 0;
+  color: #53665a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.motion-run-status[data-error="true"] {
+  color: #a33d32;
+}
+
+.motion-run-result {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #b8d7b8;
+  border-radius: 8px;
+  background: #f0f8ef;
+}
+
+.motion-run-result[hidden] {
+  display: none;
+}
+
+.motion-run-result h3 {
+  margin: 0;
+  color: #286343;
+  font-size: 15px;
+}
+
+.motion-run-result p {
+  margin: 5px 0 0;
+  color: #52665a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.motion-run-result-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.motion-run-result-stats p {
+  display: grid;
+  gap: 2px;
+}
+
+.motion-run-result-stats span {
+  color: #708075;
+  font-size: 10px;
+}
+
+.motion-run-result-stats strong {
+  color: #286343;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.motion-run-side {
+  display: grid;
+  gap: 12px;
+}
+
+.motion-run-side-heading {
+  margin-bottom: 10px;
+}
+
+.motion-run-side-heading output {
+  color: #708075;
+  font-size: 10px;
+}
+
+.motion-run-camera {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 7px;
+  background: #1d2923;
+}
+
+.motion-run-camera::before,
+.motion-run-camera::after {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.motion-run-camera::before {
+  right: 0;
+  left: 0;
+  background: linear-gradient(
+    to right,
+    rgba(9, 20, 14, 0.62) 0 21.875%,
+    transparent 21.875% 78.125%,
+    rgba(9, 20, 14, 0.62) 78.125% 100%
+  );
+}
+
+.motion-run-camera::after {
+  right: 21.875%;
+  left: 21.875%;
+  border: 2px solid rgba(198, 245, 204, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(27, 73, 43, 0.4);
+}
+
+.motion-run-camera video,
+.motion-run-camera canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.motion-run-camera video {
+  display: none;
+}
+
+.motion-run-camera[data-active="true"] video {
+  display: block;
+}
+
+.motion-run-camera canvas {
+  pointer-events: none;
+}
+
+.motion-run-camera #run-overlay {
+  right: auto;
+  left: 21.875%;
+  width: 56.25%;
+  height: 100%;
+}
+
+.motion-run-camera p {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 20px;
+  color: #dce5dc;
+  font-size: 12px;
+  text-align: center;
+}
+
+.motion-run-camera[data-active="true"] p {
+  display: none;
+}
+
+.motion-run-camera-hint {
+  margin: 7px 0 0;
+  color: #64746b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.motion-run-pose-status {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+  color: #78847b;
+  font-size: 11px;
+}
+
+.motion-run-pose-status [data-active="true"] {
+  color: #287044;
+  font-weight: 700;
+}
+
+#jump-state[data-active="true"] {
+  color: #a25b1d;
+}
+
+.motion-run-avatar-panel {
+  position: relative;
+  overflow: hidden;
+  padding-bottom: 8px;
+  background: radial-gradient(ellipse at 50% 45%, #f8faf2, #e5eee2);
+}
+
+#run-avatar {
+  display: block;
+  width: 100%;
+  height: 210px;
+}
+
+.motion-run-privacy {
+  margin: 0;
+  color: #7b877e;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+#run-game:fullscreen {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  padding: clamp(12px, 2vw, 24px);
+  border: 0;
+  border-radius: 0;
+  background: #f5f8f1;
+}
+
+#run-game:fullscreen::backdrop {
+  background: #f5f8f1;
+}
+
+#run-game:fullscreen .motion-run-course-heading {
+  flex: none;
+}
+
+#run-game:fullscreen .motion-run-scene {
+  flex: 1;
+  min-height: 0;
+}
+
+#run-game:fullscreen #course-canvas {
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+#run-game:fullscreen .motion-run-camera-panel {
+  right: clamp(12px, 2vw, 24px);
+  bottom: clamp(12px, 2vw, 24px);
+}
+
+#run-game:fullscreen .motion-run-actions,
+#run-game:fullscreen .motion-run-stats,
+#run-game:fullscreen .motion-run-progress,
+#run-game:fullscreen .motion-run-status,
+#run-game:fullscreen .motion-run-result {
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-run-feedback-pop {
+    animation: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .motion-run-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .motion-run-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .motion-run-privacy {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .motion-run-page {
+    width: min(100% - 24px, 1040px);
+  }
+
+  .motion-run-intro {
+    padding-top: 26px;
+  }
+
+  .motion-run-prototype {
+    display: none;
+  }
+
+  .motion-run-course-panel,
+  .motion-run-avatar-panel {
+    padding: 12px;
+  }
+
+  .motion-run-side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .motion-run-privacy {
+    grid-column: auto;
+  }
+
+  .motion-run-task {
+    top: 42px;
+    grid-template-columns: minmax(0, 1fr) 68px;
+    gap: 5px;
+    padding: 7px;
+  }
+
+  #pose-guide-avatar {
+    width: 62px;
+    height: 68px;
+  }
+
+  .motion-run-camera-panel {
+    right: 7px;
+    bottom: 7px;
+    width: clamp(135px, 42%, 190px);
+    max-height: calc(100% - 14px);
+    padding: 7px;
+  }
+
+  #run-game:fullscreen {
+    padding: 8px;
+  }
+
+  #run-game:fullscreen .motion-run-camera-panel {
+    right: 8px;
+    bottom: 8px;
+  }
+}

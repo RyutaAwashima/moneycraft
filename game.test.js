@@ -12,7 +12,7 @@ function createGame({
   fullscreen = "unsupported", audioAvailable = true, audioSettings = null,
   recordUvs = false, recordGeometry = false, recordRendering = false, soloWorld = null,
   selectionSettings = null, selectionReadFailure = false, selectionWriteFailure = false,
-  expectedInitializationErrors = 0,
+  expectedInitializationErrors = 0, bossTest = false,
 } = {}) {
   const uploads = [];
   const errors = [];
@@ -182,7 +182,9 @@ function createGame({
     resume() { soundEvents.push(["resume"]); this.state = "running"; return Promise.resolve(); }
   }
   const context = {
-    window, document, CustomEvent, Event, HTMLInputElement: class {}, HTMLTextAreaElement: class {},
+    window, document, CustomEvent, Event, URLSearchParams,
+    location: { search: bossTest ? "?boss-test=1" : "" },
+    HTMLInputElement: class {}, HTMLTextAreaElement: class {},
     crypto: webcrypto, performance: { now: () => time }, console: { error: (...args) => errors.push(args), warn() {} },
     AudioContext: audioAvailable ? AudioContextMock : undefined,
     localStorage: {
@@ -200,6 +202,8 @@ function createGame({
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "world-model.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "avatar-model.js"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "mob-model.js"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "boss-arena.js"), "utf8"), context);
   const avatarApi = context.MoneycraftAvatar;
   let avatarMeshBuilds = 0;
   context.MoneycraftAvatar = {
@@ -267,8 +271,54 @@ function createGame({
     advance: (ms) => { time += ms; },
     runTimeout,
     state: () => { for (const callback of intervals) callback(); return state; },
-    errors };
+    bossApi: context.MoneycraftBossArena, errors };
 }
+
+test("boss test area isolates terrain, rendering, edits and saves from normal worlds", () => {
+  const game = createGame({ bossTest: true, legacySave: true, recordRendering: true });
+  const savedBefore = game.saved.get("moneycraft-3d-world-v2");
+  const terrainBefore = game.model.serialize();
+  assert.equal(game.elements.get("#boss-test-controls").hidden, false);
+  assert.equal(game.elements.get("#touch-mine").disabled, true);
+  assert.equal(game.elements.get("#touch-place").disabled, true);
+  assert.equal(game.model.findSurface(32, 28), 6);
+  assert.equal(game.model.findSurface(32, 46), 6);
+  const entity = game.bossApi.createEntity();
+  assert.equal(entity.id, "boss-test-1");
+  assert.equal(entity.state, "idle");
+  const floor = Math.min(...entity.mesh.positions.filter((_, index) => index % 3 === 1));
+  assert.ok(Math.abs(floor - 6) < 1e-6, "mob feet sit on the arena floor");
+  const triangles = () => game.renderEvents.filter((event) => !event.textured && event.mode === 4)
+    .reduce((sum, event) => sum + event.count, 0);
+  game.frame();
+  assert.equal(triangles(), entity.mesh.positions.length / 3);
+  game.renderEvents.length = 0;
+  input(game.elements.get("#boss-test-remove"), "click");
+  game.frame();
+  assert.equal(triangles(), 0);
+  for (let index = 0; index < 2; index++) input(game.elements.get("#boss-test-spawn"), "click");
+  game.renderEvents.length = 0;
+  game.frame();
+  assert.equal(triangles(), entity.mesh.positions.length / 3, "repeated spawn replaces, not duplicates");
+  game.document.pointerLockElement = game.elements.get("#game");
+  input(game.window, "mousemove", { movementX: 0, movementY: 1000 });
+  input(game.elements.get("#game"), "mousedown", { button: 0 });
+  input(game.window, "mouseup", { button: 0 });
+  assert.match(game.elements.get("#game-message").textContent, /設置・破壊はできません/);
+  input(game.elements.get("#game"), "mousedown", { button: 2 });
+  input(game.window, "mouseup", { button: 2 });
+  assert.match(game.elements.get("#game-message").textContent, /設置・破壊はできません/);
+  game.join();
+  game.change(1, 32, 5, 28, 0, 1);
+  game.emit("world-snapshot", { world: game.roomWorld, revision: 2 });
+  input(game.elements.get("#reset-world"), "click");
+  game.frame(160);
+  assert.deepEqual(game.model.serialize(), terrainBefore);
+  assert.equal(game.saved.get("moneycraft-3d-world-v2"), savedBefore);
+  assert.equal(game.state(), undefined, "arena never sends shared player state");
+  const normal = createGame({ legacySave: true });
+  assert.equal(normal.model.getBlock(38, 16, 38), 9, "normal saved construction remains available");
+});
 
 function input(target, type, properties = {}) {
   const event = new Event(type, { cancelable: true });

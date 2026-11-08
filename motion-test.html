@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#172b25">
+    <meta name="referrer" content="no-referrer">
+    <meta name="description" content="PCカメラを使ったMoneycraftのモーションセンシング試作ページ。">
+    <title>モーションセンシング試作 — Moneycraft</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="stylesheet" href="./motion-test.css">
+    <script src="./avatar-model.js" defer></script>
+    <script src="./motion-sensing.js" defer></script>
+    <script src="./motion-avatar.js" defer></script>
+    <script src="./motion-test.js" defer></script>
+  </head>
+  <body>
+    <main class="page motion-page">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="Moneycraft 建築へ戻る">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <span>moneycraft</span>
+        </a>
+        <nav class="motion-test-nav" aria-label="モーション検証">
+          <a class="motion-back" href="./motion-arm-swing.html">腕振り判定テスト</a>
+          <a class="motion-back" href="./">建築へ戻る</a>
+        </nav>
+      </header>
+
+      <section class="motion-intro" aria-labelledby="motion-title">
+        <div>
+          <p class="eyebrow">MONEYCRAFT MOTION TEST</p>
+          <h1 id="motion-title">モーションセンシング試作</h1>
+          <p>PCカメラで上半身の姿勢を読み取り、ジャンプ・しゃがみ・腕のポーズを試します。</p>
+        </div>
+        <span class="motion-prototype">TEST PAGE</span>
+      </section>
+
+      <p class="motion-notice">
+        このページは姿勢認識の試作です。建築・冒険モードの操作には接続されません。右側のアバター表示に姿勢を反映します。
+        カメラ映像はこのブラウザー内で処理し、保存・送信しません。
+        姿勢推定ライブラリとモデルは外部CDNから読み込みます。
+      </p>
+
+      <section class="motion-layout" aria-label="カメラと動作認識">
+        <section class="motion-panel motion-camera-panel" aria-labelledby="camera-title">
+          <div class="motion-section-heading">
+            <div>
+              <p class="motion-kicker">01 / CAMERA</p>
+              <h2 id="camera-title">カメラと上半身の映り方</h2>
+            </div>
+            <span class="motion-live-dot" id="camera-indicator" aria-hidden="true"></span>
+          </div>
+
+          <div class="motion-preview" id="motion-preview">
+            <video id="motion-video" autoplay muted playsinline aria-label="カメラ映像"></video>
+            <canvas id="motion-overlay" aria-hidden="true"></canvas>
+            <div class="motion-preview-placeholder" id="preview-placeholder">
+              <span aria-hidden="true">◎</span>
+              <p>開始を押すとカメラ映像がここに表示されます</p>
+            </div>
+            <output class="motion-camera-badge" id="camera-badge">カメラ停止中</output>
+          </div>
+
+          <div class="motion-actions">
+            <button class="room-button room-create" id="camera-start" type="button">カメラを開始</button>
+            <button class="reset-button" id="camera-stop" type="button" disabled>停止</button>
+            <button class="reset-button" id="calibrate" type="button" disabled>立ち姿勢を再計測</button>
+          </div>
+          <section class="motion-tuning" aria-labelledby="tuning-title">
+            <h3 id="tuning-title">カメラ・環境に合わせて判定を調整</h3>
+            <label class="motion-tuning-control" for="vertical-threshold">
+              <span>上下移動の感度 <output id="vertical-threshold-value">14%</output></span>
+              <input id="vertical-threshold" type="range" min="6" max="30" step="1" value="14">
+            </label>
+            <label class="motion-tuning-control" for="tilt-threshold">
+              <span>体の傾きの感度 <output id="tilt-threshold-value">8%</output></span>
+              <input id="tilt-threshold" type="range" min="2" max="25" step="1" value="8">
+            </label>
+            <label class="motion-tuning-toggle" for="use-tilt">
+              <input id="use-tilt" type="checkbox" checked>
+              <span>スニーク判定に体の傾きも使う</span>
+            </label>
+            <button class="reset-button motion-tuning-reset" id="reset-tuning" type="button">判定設定を初期値に戻す</button>
+            <p id="tuning-status" role="status">設定はこのブラウザーに保存されます。傾きが映像に出にくい場合は、チェックを外して試してください。</p>
+            <p id="motion-measurements">計測値：立ち姿勢を計測後に表示</p>
+            <p>アバターには肩と腰の左右位置差をもとに、画面上の左右への傾きを弱く反映します。腰が見えない場合は頭と肩の差をさらに弱く使います。前後の傾きは現時点で反映しません。</p>
+          </section>
+          <p class="motion-status" id="camera-status" role="status" aria-live="polite">
+            頭から腰あたりまでが映る位置にカメラを置いてください。開始後、立ち姿勢を自動計測します。
+          </p>
+          <ul class="motion-tips">
+            <li>頭・両肩・腕が映り、できれば腰まで入る距離に立ちます。足先は映らなくても判定できます。</li>
+            <li>明るい場所で、背景と服の色が近すぎないようにします。</li>
+            <li>立ち姿勢の計測中は、まっすぐ立って静止してください。</li>
+          </ul>
+        </section>
+
+        <section class="motion-panel motion-results-panel" aria-labelledby="results-title">
+          <div class="motion-section-heading">
+            <div>
+              <p class="motion-kicker">02 / LIVE ESTIMATE</p>
+              <h2 id="results-title">姿勢の認識</h2>
+            </div>
+            <output class="motion-fps" id="inference-rate">-- fps</output>
+          </div>
+
+          <section class="motion-avatar-preview" aria-labelledby="avatar-preview-title">
+            <div class="motion-avatar-heading">
+              <h3 id="avatar-preview-title">アバターの動き</h3>
+              <output id="avatar-motion-status" role="status" aria-live="polite">カメラ開始待ち</output>
+            </div>
+            <canvas id="motion-avatar" width="360" height="300" aria-label="カメラの姿勢を反映するアバター">
+              WebGLに対応したブラウザーが必要です。
+            </canvas>
+            <p id="avatar-appearance-status">保存したアバターの外観を使用します。カメラ内の位置で左右に動き、体の傾きを反映します。</p>
+          </section>
+
+          <div class="motion-lane" aria-label="画面内の左右位置">
+            <div class="motion-lane-center" aria-hidden="true"></div>
+            <span class="motion-lane-label motion-lane-left">左</span>
+            <span class="motion-lane-label motion-lane-right">右</span>
+            <span class="motion-lane-marker" id="position-marker" aria-hidden="true"></span>
+          </div>
+          <p class="motion-position-status" id="position-status">左右位置：未計測</p>
+
+          <div class="motion-detections" aria-label="動作判定">
+            <article class="motion-detection" id="detection-jump">
+              <span class="motion-detection-icon" aria-hidden="true">↑</span>
+              <div><h3>ジャンプ</h3><p>上昇を検出。腕上げも補助判定に使用</p></div>
+              <output>待機</output>
+            </article>
+            <article class="motion-detection" id="detection-squat">
+              <span class="motion-detection-icon" aria-hidden="true">↓</span>
+              <div><h3>スニーク / しゃがみ</h3><p>下降と体の傾きでジャンプと区別</p></div>
+              <output>待機</output>
+            </article>
+            <article class="motion-detection" id="detection-arms-up">
+              <span class="motion-detection-icon" aria-hidden="true">↟</span>
+              <div><h3>両手を上げる</h3><p>左右の手首が肩より上</p></div>
+              <output>待機</output>
+            </article>
+            <article class="motion-detection" id="detection-t-pose">
+              <span class="motion-detection-icon" aria-hidden="true">↔</span>
+              <div><h3>T字ポーズ</h3><p>腕を左右に伸ばしてキープ</p></div>
+              <output>待機</output>
+            </article>
+            <article class="motion-detection" id="detection-left-arm-up">
+              <span class="motion-detection-icon" aria-hidden="true">↖</span>
+              <div><h3>本人の左腕だけを上げる</h3><p>左手首が肩より上、右腕は上げない</p></div>
+              <output>待機</output>
+            </article>
+            <article class="motion-detection" id="detection-right-arm-up">
+              <span class="motion-detection-icon" aria-hidden="true">↗</span>
+              <div><h3>本人の右腕だけを上げる</h3><p>右手首が肩より上、左腕は上げない</p></div>
+              <output>待機</output>
+            </article>
+            <article class="motion-detection" id="detection-right-horizontal-left-up">
+              <span class="motion-detection-icon" aria-hidden="true">↗→</span>
+              <div><h3>本人の右腕を水平・左腕を上げる</h3><p>右腕を横、左手首を肩より上へ</p></div>
+              <output>待機</output>
+            </article>
+            <article class="motion-detection" id="detection-left-horizontal-right-up">
+              <span class="motion-detection-icon" aria-hidden="true">←↖</span>
+              <div><h3>本人の左腕を水平・右腕を上げる</h3><p>左腕を横、右手首を肩より上へ</p></div>
+              <output>待機</output>
+            </article>
+          </div>
+          <p class="motion-recognition-status" id="recognition-status" role="status" aria-live="polite">
+            カメラを開始すると認識結果が表示されます。
+          </p>
+          <ol class="motion-event-log" id="event-log" aria-label="動作の検出履歴"></ol>
+        </section>
+      </section>
+
+      <footer class="motion-footer">
+        <span>姿勢推定：MediaPipe Pose Landmarker · Lite</span>
+        <span>試作のため、動作を誤認識することがあります。実際に動くときは周囲に十分なスペースを確保してください。</span>
+      </footer>
+    </main>
+  </body>
+</html>
