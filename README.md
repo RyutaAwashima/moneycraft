@@ -30,12 +30,16 @@ file server.
 
 Use the **建築** and **部屋管理** tabs to switch between the game and
 multiplayer room controls. Invitation links open the room-management tab.
+The main page groups the mob workshop, boss test arena, pose run, and camera
+tests under **試作・開発ツール**. These experimental pages are publicly
+accessible when the site is published; their behavior may change.
 
 ## Motion sensing and pose run
 
 Run `node dev-server.js` and open `http://127.0.0.1:49179/motion-run.html` to try
-the [pose-run mode](./motion-run.html). HTTPS or localhost is required for
-camera access. Its dedicated block course, “ひだまりの森,” follows a curving
+the standalone [pose-run experience](./motion-run.html), independent of the
+building and adventure game modes. HTTPS or localhost is required for camera
+access. Its dedicated block course, “ひだまりの森,” follows a curving
 route through grassland, a wooden bridge, a stone grove and a flower hill. The
 3D course is separate from the building world's saved data. Repeated side-to-side
 wrist swings move the runner forward; the detected cadence in hertz is also the
@@ -183,6 +187,10 @@ Run its focused checks with `node --test avatar.test.js`.
 
 ## Mob editor development tool
 
+For entity/combat integration, see the Japanese
+[mob handoff document](./MOB_HANDOFF.md), including API contracts, animation/root-motion
+boundaries, the fixed test arena, gameplay intent and next implementation steps.
+
 Open [mob.html](./mob.html), or follow **モブ工房（開発ツール）** from the game.
 The default is a quadruped dragon. Its torso, hips, four legs, neck, head, jaw
 and tail use shared skeleton anchors. Each wing starts behind the forelegs and
@@ -259,14 +267,17 @@ collision, hitboxes, damage or flight physics.
 the captured hover phase (0–1) as its optional fifth argument.
 ### Fixed boss test arena (development tool)
 
-Open `./index.html?boss-test=1` from **ボス用テストエリア（開発ツール）** on the game page.
-The existing game renderer and player controls show one enemy-size mob in a flat,
-64×64 enclosed test area. Use **モブを1体配置／再配置** or **モブを取り除く**
-to check its lifecycle and rendering; **観察位置へ戻る** resets only the observer.
-Block placement and destruction are disabled. The arena never loads or saves the
-normal solo world and does not connect to rooms, even with a room invitation URL.
-Return to the normal game to resume building. This is a static integration prototype:
-mob movement, foot IK, mob collision, attacks, aura and persistence are not implemented.
+Open `./index.html?boss-test=1` from **試作・開発ツール** on the game page.
+The existing game renderer and player controls show one enemy-size mob in an
+enclosed 64×64 test area with a half-block step and a trench. The mob follows
+the player, walks over the step and stops at unsupported terrain or walls. It
+also telegraphs a stomp that can be dodged; a hit causes no damage. Use
+**モブを1体配置／再配置** or **モブを取り除く** to check its lifecycle and
+rendering; **観察位置へ戻る** resets only the observer. Block placement and
+destruction are disabled. The arena never loads or saves the normal solo world
+and does not connect to rooms, even with a room invitation URL. Return to the
+normal game to resume building. This remains an integration prototype: health,
+damage, foot IK, mob-player collision, aura and persistence are not implemented.
 
 Face families are separate sculpting packages with their own controls. The
 dragon keeps its hinged jaw, teeth, side-facing eyes, horns, and head styles.

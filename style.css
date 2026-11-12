@@ -91,6 +91,43 @@ button {
   text-underline-offset: 3px;
 }
 
+.prototype-entry {
+  color: #69766e;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.prototype-entry summary {
+  min-height: 44px;
+  padding: 11px 0;
+  color: var(--green);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.prototype-entry summary:focus-visible {
+  outline: 3px solid #b7d4b8;
+  outline-offset: 2px;
+}
+
+.prototype-entry p {
+  margin: 0 0 4px;
+}
+
+.prototype-entry ul {
+  margin: 0 0 12px;
+  padding-left: 1.5em;
+}
+
+.prototype-entry li {
+  margin: 6px 0;
+}
+
+.prototype-entry a {
+  color: var(--green);
+  text-underline-offset: 3px;
+}
+
 .workspace-tab {
   min-height: 38px;
   flex: 1;

@@ -2460,6 +2460,16 @@
     const beforeZ = player.z;
     update(dt);
     updateAvatarMotion(localAvatar.motion, player, dt, player.x - beforeX, player.z - beforeZ, playerLocomotion());
+    if (bossTest && bossEntity) {
+      bossArena.updateEntity(bossEntity, worldModel, player, dt);
+      if (bossEntity.event === "telegraph") {
+        message.textContent = "踏みつけ予告！攻撃範囲から離れてください";
+      } else if (bossEntity.event === "hit") {
+        message.textContent = "踏みつけが命中しました（テスト中：ダメージなし）";
+      } else if (bossEntity.event === "miss") {
+        message.textContent = "踏みつけを回避しました";
+      }
+    }
     debugTimer += dt;
     if (debugTimer >= 0.1) {
       updateDebugIndicator();
@@ -2490,7 +2500,7 @@
     if (bossTest) {
       document.querySelector("#boss-test-controls").hidden = false;
       document.querySelector("#game-title").textContent = "巨大モブのテストエリア";
-      document.querySelector(".intro-copy").textContent = "地形固定のエリアを歩き、巨大モブの大きさと描画負荷を確認します。";
+      document.querySelector(".intro-copy").textContent = "敵に近づくと踏みつけを予告します。予告中に攻撃範囲から離れて回避してください。";
       saveState.textContent = "開発用：保存／共有なし";
       resetButton.textContent = "観察位置へ戻る";
       touchMine.disabled = true;
@@ -2508,7 +2518,7 @@
         bossEntity = null;
         message.textContent = "テストモブを取り除きました";
       });
-      message.textContent = "ボス用テストエリア：設置・破壊不可。モブは静止表示です";
+      message.textContent = "敵に近づくと踏みつけを予告します。攻撃にダメージはありません";
     }
     if (window.matchMedia?.("(any-pointer: coarse)").matches) enableTouchControls();
     window.setInterval(sendCurrentPlayerState, PLAYER_STATE_INTERVAL_MS);

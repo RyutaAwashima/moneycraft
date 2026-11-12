@@ -204,6 +204,17 @@ function createGame({
   vm.runInContext(fs.readFileSync(path.join(__dirname, "avatar-model.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "mob-model.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "boss-arena.js"), "utf8"), context);
+  const bossArenaApi = context.MoneycraftBossArena;
+  let testBossEntity = null;
+  let testBossTarget = null;
+  context.MoneycraftBossArena = Object.freeze({
+    ...bossArenaApi,
+    createEntity: () => { testBossEntity = bossArenaApi.createEntity(); return testBossEntity; },
+    updateEntity: (entity, world, target, dt) => {
+      testBossTarget = target;
+      return bossArenaApi.updateEntity(entity, world, target, dt);
+    },
+  });
   const avatarApi = context.MoneycraftAvatar;
   let avatarMeshBuilds = 0;
   context.MoneycraftAvatar = {
@@ -265,6 +276,8 @@ function createGame({
     texturePixels, previews, textureUploads, uvUploads, positionUploads, outlineUploads, renderEvents, heldRenderEvents, viewMatrices,
     emit, join, change, selectBlock, roomWorld, window, document, timers, avatarApi, avatarPoses,
     get avatarMeshBuilds() { return avatarMeshBuilds; },
+    get bossEntity() { return testBossEntity; },
+    get bossTarget() { return testBossTarget; },
     frame: (count = 1, interval = 1000 / 30) => {
       for (let i = 0; i < count; i += 1) { time += interval; frame(time); }
     },
@@ -282,7 +295,8 @@ test("boss test area isolates terrain, rendering, edits and saves from normal wo
   assert.equal(game.elements.get("#touch-mine").disabled, true);
   assert.equal(game.elements.get("#touch-place").disabled, true);
   assert.equal(game.model.findSurface(32, 28), 6);
-  assert.equal(game.model.findSurface(32, 46), 6);
+  assert.equal(game.model.findSurface(32, 34), 6.5);
+  assert.equal(game.model.findSurface(32, 46), 1, "the arena has a gap before the observation platform");
   const entity = game.bossApi.createEntity();
   assert.equal(entity.id, "boss-test-1");
   assert.equal(entity.state, "idle");
@@ -300,6 +314,23 @@ test("boss test area isolates terrain, rendering, edits and saves from normal wo
   game.renderEvents.length = 0;
   game.frame();
   assert.equal(triangles(), entity.mesh.positions.length / 3, "repeated spawn replaces, not duplicates");
+  const mobDraw = () => game.renderEvents.filter((event) => !event.textured && event.mode === 4).at(-1);
+  const initialMobZ = mobDraw().positions.reduce((sum, value, index) =>
+    sum + (index % 3 === 2 ? value : 0), 0) / (mobDraw().positions.length / 3);
+  const initialEntityZ = game.bossEntity.position.z;
+  game.renderEvents.length = 0;
+  game.frame(90);
+  assert.ok(game.bossEntity.position.z > initialEntityZ + 1,
+    `the arena entity advances (${initialEntityZ} -> ${game.bossEntity.position.z})`);
+  const movedMob = mobDraw();
+  const movedMobZ = movedMob.positions.reduce((sum, value, index) =>
+    sum + (index % 3 === 2 ? value : 0), 0) / (movedMob.positions.length / 3);
+  const entityMeshZ = game.bossEntity.mesh.positions.reduce((sum, value, index) =>
+    sum + (index % 3 === 2 ? value : 0), 0) / (game.bossEntity.mesh.positions.length / 3);
+  assert.ok(entityMeshZ > initialMobZ + 1,
+    `the test enemy's mesh follows its movement (${initialMobZ} -> ${entityMeshZ})`);
+  assert.ok(Math.abs(movedMobZ - entityMeshZ) < 0.001,
+    `the renderer uses the current mob mesh (${movedMobZ} vs ${entityMeshZ})`);
   game.document.pointerLockElement = game.elements.get("#game");
   input(game.window, "mousemove", { movementX: 0, movementY: 1000 });
   input(game.elements.get("#game"), "mousedown", { button: 0 });
@@ -318,6 +349,29 @@ test("boss test area isolates terrain, rendering, edits and saves from normal wo
   assert.equal(game.state(), undefined, "arena never sends shared player state");
   const normal = createGame({ legacySave: true });
   assert.equal(normal.model.getBlock(38, 16, 38), 9, "normal saved construction remains available");
+});
+
+test("boss test area reports stomp warnings, hits and dodges without applying damage", () => {
+  const game = createGame({ bossTest: true });
+  game.frame();
+  game.bossTarget.x = 32;
+  game.bossTarget.z = 33;
+  game.frame();
+  assert.equal(game.bossEntity.state, "telegraph");
+  assert.match(game.elements.get("#game-message").textContent, /踏みつけ予告/);
+
+  game.frame(60);
+  assert.equal(game.bossEntity.state, "active");
+  assert.match(game.elements.get("#game-message").textContent, /ダメージなし/);
+
+  const dodgedGame = createGame({ bossTest: true });
+  dodgedGame.frame();
+  dodgedGame.bossTarget.x = 32;
+  dodgedGame.bossTarget.z = 33;
+  dodgedGame.frame();
+  dodgedGame.bossTarget.x = 35;
+  dodgedGame.frame(60);
+  assert.match(dodgedGame.elements.get("#game-message").textContent, /回避/);
 });
 
 function input(target, type, properties = {}) {

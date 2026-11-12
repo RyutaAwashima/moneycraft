@@ -32,11 +32,17 @@
         <button class="workspace-tab" id="room-tab" type="button" role="tab" aria-selected="false" aria-controls="room-view" tabindex="-1">部屋管理</button>
       </nav>
       <p class="avatar-entry"><a href="./avatar.html">アバターのアトリエ</a> · 保存した外観を三人称視点で確認・共同建築で共有</p>
-      <p class="avatar-entry"><a href="./mob.html">モブ工房（開発ツール）</a> · モブの外観定義を試作してJSON出力</p>
-      <p class="avatar-entry"><a href="./index.html?boss-test=1">ボス用テストエリア（開発ツール）</a> · 地形固定・保存／共有なし</p>
-      <p class="avatar-entry"><a href="./motion-run.html">ポーズラン</a> · 専用のブロックコースでポーズゲートに挑戦</p>
-      <p class="avatar-entry"><a href="./motion-arm-swing.html">腕振り判定テスト</a> · 腕振りを歩行入力にできるか確認</p>
-      <p class="avatar-entry"><a href="./motion-test.html">モーションセンサー検証</a> · カメラ認識の調整・動作確認</p>
+      <details class="prototype-entry">
+        <summary>試作・開発ツール</summary>
+        <p>開発中の試作です。内容や操作は変更されることがあります。</p>
+        <ul>
+          <li><a href="./mob.html">モブ工房（開発ツール）</a> · モブの外観定義を試作してJSON出力</li>
+          <li><a href="./index.html?boss-test=1">ボス用テストエリア（開発ツール）</a> · 地形固定・保存／共有なし</li>
+          <li><a href="./motion-run.html">ポーズラン</a> · 専用のブロックコースでポーズゲートに挑戦</li>
+          <li><a href="./motion-arm-swing.html">腕振り判定テスト</a> · 腕振りを歩行入力にできるか確認</li>
+          <li><a href="./motion-test.html">モーションセンサー検証</a> · カメラ認識の調整・動作確認</li>
+        </ul>
+      </details>
       <p class="avatar-entry" id="avatar-sharing-status" role="status" aria-live="polite"></p>
 
       <section class="workspace-view" id="build-view" role="tabpanel" aria-labelledby="build-tab">
@@ -46,7 +52,7 @@
         <p class="intro-copy">一人称の世界を歩き回って、ブロックで自由に建築しよう。</p>
         <div id="boss-test-controls" hidden>
           <p>ボス用テストエリア：設置・破壊不可。通常ワールドの保存データは変更しません。
-            モブは静止表示のみ。移動・接地補正・モブとの衝突・戦闘・オーラは未実装です。</p>
+            半ブロック段差のあるコースと溝を配置。敵に近づくと踏みつけを予告し、予告中に攻撃範囲から離れると回避できます。テスト中のため攻撃にダメージはありません。</p>
           <button class="reset-button" id="boss-test-spawn" type="button">モブを1体配置／再配置</button>
           <button class="reset-button" id="boss-test-remove" type="button">モブを取り除く</button>
           <a href="./index.html">通常の建築に戻る</a>
