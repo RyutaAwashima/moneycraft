@@ -9,7 +9,7 @@ const { webcrypto } = require("node:crypto");
 
 function createGame({
   legacySave = false, roomOptions = { width: 40, depth: 40, height: 20 },
-  fullscreen = "unsupported", audioAvailable = true, audioSettings = null,
+  fullscreen = "unsupported", touchDevice = false, audioAvailable = true, audioSettings = null,
   recordUvs = false, recordGeometry = false, recordRendering = false, soloWorld = null,
   selectionSettings = null, selectionReadFailure = false, selectionWriteFailure = false,
   expectedInitializationErrors = 0, bossTest = false,
@@ -125,15 +125,26 @@ function createGame({
   document.querySelector("#debug-indicator").hidden = true;
   document.querySelector("#block-picker").append(document.querySelector("#block-options"),
     document.querySelector("#confirm-block-picker"), document.querySelector("#cancel-block-picker"));
+  document.querySelector("#fullscreen-menu").append(document.querySelector("#fullscreen-restore"),
+    document.querySelector("#fullscreen-exit"));
+  document.querySelector("#fullscreen-menu").hidden = true;
+  document.querySelector("#fullscreen-restore").hidden = true;
+  document.querySelector("#fullscreen-status").hidden = true;
   document.createElement = () => new Element();
   document.body = new Element();
   if (fullscreen !== "unsupported") {
+    let requests = 0;
     document.querySelector(".game-card").requestFullscreen = async () => {
-      if (fullscreen === "rejected") throw new Error("Fullscreen denied");
+      requests += 1;
+      if (fullscreen === "rejected" || (fullscreen === "restore-rejected" && requests > 1)) {
+        throw new Error("Fullscreen denied");
+      }
+      if (fullscreen === "no-change" || (fullscreen === "restore-no-change" && requests > 1)) return;
       document.fullscreenElement = document.querySelector(".game-card");
       document.dispatchEvent(new Event("fullscreenchange"));
     };
     document.exitFullscreen = async () => {
+      if (fullscreen === "exit-rejected") throw new Error("Fullscreen exit denied");
       document.fullscreenElement = null;
       document.dispatchEvent(new Event("fullscreenchange"));
     };
@@ -150,6 +161,7 @@ function createGame({
     setInterval: (callback) => intervals.push(callback),
     requestAnimationFrame: (callback) => { frame = callback; },
     confirm: () => true,
+    matchMedia: (query) => ({ matches: touchDevice && query === "(any-pointer: coarse)" }),
   });
   const saved = new Map();
   if (selectionSettings !== null) saved.set("moneycraft-block-selection-v1",
@@ -3065,4 +3077,158 @@ test("fullscreen denial is reported and leaves the normal layout intact", async 
   assert.equal(game.errors.length, 1);
   assert.equal(game.elements.get("#fullscreen-game").attributes.get("aria-pressed"), "false");
   assert.match(game.elements.get("#game-message").textContent, /切り替えられません/);
+});
+
+test("touch fullscreen keeps the game expanded on browser exit and uses an explicit exit menu", async () => {
+  const game = createGame({ fullscreen: "native", touchDevice: true });
+  const card = game.elements.get(".game-card");
+  const button = game.elements.get("#fullscreen-game");
+  const menu = game.elements.get("#fullscreen-menu");
+  const restore = game.elements.get("#fullscreen-restore");
+  const exit = game.elements.get("#fullscreen-exit");
+  const status = game.elements.get("#fullscreen-status");
+  input(button, "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.document.fullscreenElement, card);
+  assert.equal(button.hidden, true);
+  assert.equal(menu.hidden, false);
+  assert.equal(restore.hidden, true);
+
+  menu.open = true;
+  input(game.document, "pointerdown");
+  assert.equal(menu.open, false, "tapping outside only closes the menu");
+  assert.equal(game.document.fullscreenElement, card);
+  assert.equal(card.classList.contains("is-expanded"), true);
+
+  await game.document.exitFullscreen();
+  assert.equal(card.classList.contains("is-expanded"), true);
+  assert.equal(game.document.body.classList.contains("game-expanded"), true);
+  assert.equal(menu.hidden, false);
+  assert.equal(restore.hidden, false);
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /画面内で拡大表示を続けています/);
+
+  menu.open = true;
+  input(restore, "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.document.fullscreenElement, card);
+  assert.equal(status.hidden, true);
+  assert.equal(menu.open, false);
+
+  menu.open = true;
+  exit.focus();
+  input(exit, "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.document.fullscreenElement, null);
+  assert.equal(card.classList.contains("is-expanded"), false);
+  assert.equal(game.document.body.classList.contains("game-expanded"), false);
+  assert.equal(menu.hidden, true);
+  assert.equal(button.hidden, false);
+  assert.equal(button.attributes.get("aria-pressed"), "false");
+  assert.equal(game.document.activeElement, button);
+});
+
+test("touch fullscreen uses the same explicit menu when native fullscreen is unavailable", async () => {
+  const game = createGame({ touchDevice: true });
+  const card = game.elements.get(".game-card");
+  const menu = game.elements.get("#fullscreen-menu");
+  input(game.elements.get("#fullscreen-game"), "click");
+  assert.equal(card.classList.contains("is-expanded"), true);
+  assert.equal(menu.hidden, false);
+  assert.equal(game.elements.get("#fullscreen-restore").hidden, true);
+  assert.match(game.elements.get("#fullscreen-status").textContent, /画面内で拡大表示/);
+  menu.open = true;
+  input(game.document, "pointerdown");
+  assert.equal(menu.open, false);
+  assert.equal(card.classList.contains("is-expanded"), true);
+  input(game.elements.get("#fullscreen-exit"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(card.classList.contains("is-expanded"), false);
+  assert.equal(game.elements.get("#fullscreen-status").hidden, true);
+});
+
+test("touching a mouse-started fullscreen switches to the protected touch controls", async () => {
+  const game = createGame({ fullscreen: "native" });
+  const card = game.elements.get(".game-card");
+  input(game.elements.get("#fullscreen-game"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.elements.get("#fullscreen-menu").hidden, true);
+  input(game.elements.get("#game"), "pointerdown", {
+    pointerType: "touch", pointerId: 1, clientX: 100, clientY: 200,
+  });
+  assert.equal(game.elements.get("#fullscreen-menu").hidden, false);
+  await game.document.exitFullscreen();
+  assert.equal(card.classList.contains("is-expanded"), true);
+  input(game.elements.get("#fullscreen-exit"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(card.classList.contains("is-expanded"), false);
+});
+
+test("a touch on the fullscreen button selects touch controls even without coarse-pointer detection", async () => {
+  const game = createGame({ fullscreen: "native" });
+  const button = game.elements.get("#fullscreen-game");
+  input(button, "pointerdown", { pointerType: "touch" });
+  input(button, "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.elements.get("#fullscreen-menu").hidden, false);
+  assert.equal(button.hidden, true);
+  await game.document.exitFullscreen();
+  assert.equal(game.elements.get(".game-card").classList.contains("is-expanded"), true);
+  input(game.window, "keydown", { code: "Escape" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.elements.get(".game-card").classList.contains("is-expanded"), false);
+});
+
+test("a rejected native fullscreen request reports the touch fallback", async () => {
+  const game = createGame({ fullscreen: "rejected", touchDevice: true });
+  input(game.elements.get("#fullscreen-game"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.errors.length, 1);
+  assert.equal(game.elements.get(".game-card").classList.contains("is-expanded"), true);
+  assert.equal(game.elements.get("#fullscreen-menu").hidden, false);
+  assert.match(game.elements.get("#fullscreen-status").textContent, /開始できませんでした/);
+  input(game.elements.get("#fullscreen-exit"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.elements.get(".game-card").classList.contains("is-expanded"), false);
+});
+
+test("a fullscreen request that is no longer active reports the page-filling fallback", async () => {
+  const game = createGame({ fullscreen: "no-change", touchDevice: true });
+  input(game.elements.get("#fullscreen-game"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(game.elements.get(".game-card").classList.contains("is-expanded"), true);
+  assert.match(game.elements.get("#fullscreen-status").textContent, /解除されました/);
+  assert.equal(game.elements.get("#fullscreen-restore").hidden, false);
+
+  const restoreGame = createGame({ fullscreen: "restore-no-change", touchDevice: true });
+  input(restoreGame.elements.get("#fullscreen-game"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await restoreGame.document.exitFullscreen();
+  input(restoreGame.elements.get("#fullscreen-restore"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(restoreGame.elements.get(".game-card").classList.contains("is-expanded"), true);
+  assert.match(restoreGame.elements.get("#fullscreen-status").textContent, /戻れませんでした/);
+});
+
+test("failed fullscreen restore or exit stays expanded and reports the error", async () => {
+  const restoreGame = createGame({ fullscreen: "restore-rejected", touchDevice: true });
+  input(restoreGame.elements.get("#fullscreen-game"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await restoreGame.document.exitFullscreen();
+  input(restoreGame.elements.get("#fullscreen-restore"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(restoreGame.errors.length, 1);
+  assert.equal(restoreGame.elements.get(".game-card").classList.contains("is-expanded"), true);
+  assert.equal(restoreGame.elements.get("#fullscreen-restore").disabled, false);
+  assert.match(restoreGame.elements.get("#fullscreen-status").textContent, /戻せませんでした/);
+
+  const exitGame = createGame({ fullscreen: "exit-rejected", touchDevice: true });
+  input(exitGame.elements.get("#fullscreen-game"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  input(exitGame.elements.get("#fullscreen-exit"), "click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(exitGame.errors.length, 1);
+  assert.equal(exitGame.elements.get(".game-card").classList.contains("is-expanded"), true);
+  assert.equal(exitGame.elements.get("#fullscreen-exit").disabled, false);
+  assert.match(exitGame.elements.get("#fullscreen-status").textContent, /解除できませんでした/);
 });

@@ -433,8 +433,12 @@ Include effect checks with `node --test mob.test.js silhouette-effect.test.js mo
   place, and jump. Double-tap jump to toggle flight; hold the ascent or descent
   button to change height. Releasing a touch or leaving the page clears held input.
 - Use the fullscreen button to show just the game, controls, and hotbar.
-  Exit with the same button or `Esc`. Browsers without element fullscreen
-  support use a page-filling layout instead (browser chrome may remain).
+  On touch devices, open **画面メニュー** and select **全画面解除** to leave;
+  tapping outside the menu only closes the menu. `Esc` also exits. If the
+  browser exits native fullscreen independently, the game remains expanded
+  within the page, though browser chrome may appear. When supported, use
+  **全画面表示に戻す** in the menu to request native fullscreen again.
+  Browsers without element fullscreen support use the page-filling layout.
 
 All seventeen blocks have small procedural pixel textures. Planks, bricks, a white
 wall, and a translucent window are available alongside the original

@@ -72,11 +72,21 @@
               <input id="sound-volume" type="range" min="0" max="1" step="0.05" value="0.35" aria-label="音量">
               <span class="sound-status" id="sound-status" role="status" aria-live="polite"></span>
             </div>
-            <button class="reset-button" id="fullscreen-game" type="button" aria-pressed="false">全画面</button>
+            <div class="fullscreen-controls">
+              <button class="reset-button" id="fullscreen-game" type="button" aria-pressed="false">全画面</button>
+              <details class="fullscreen-menu" id="fullscreen-menu" hidden>
+                <summary class="reset-button">画面メニュー</summary>
+                <div class="fullscreen-menu-panel">
+                  <button class="reset-button" id="fullscreen-restore" type="button" hidden>全画面表示に戻す</button>
+                  <button class="reset-button" id="fullscreen-exit" type="button">全画面解除</button>
+                </div>
+              </details>
+            </div>
             <button class="reset-button camera-toggle" id="camera-toggle" type="button" aria-label="視点：一人称。後方三人称へ切替">視点：一人称 · V</button>
             <button class="reset-button" id="reset-world" type="button">ワールドをリセット</button>
           </div>
         </div>
+        <output class="fullscreen-status" id="fullscreen-status" role="status" aria-live="polite" hidden></output>
         <div class="canvas-wrap">
           <canvas id="game" width="960" height="540" aria-label="3Dブロックワールド。WASDキーで移動し、マウスで視点を動かします。Vキーまたは視点ボタンで切替。三人称は閲覧専用です。">
             このゲームを遊ぶには、WebGLに対応したブラウザーが必要です。
@@ -123,7 +133,7 @@
         </article>
         <article class="help-item">
           <span class="help-icon" aria-hidden="true">⌨</span>
-          <div><h2>歩く・飛ぶ</h2><p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> で移動。<kbd>W</kbd> を300ms以内に二度押し、または <kbd>F</kbd>＋<kbd>W</kbd> を押している間は1.5倍速でダッシュ（飛行中も対応）。二度押しダッシュは <kbd>W</kbd> を離すと解除。マウスで見回し、<kbd>Space</kbd> でジャンプ。素早く2回押すと飛行ON/OFF。飛行中は長押しで上昇、<kbd>Shift</kbd> で下降、離すと浮遊します。タッチ端末は左のパッドで移動、画面右のドラッグで見回し、ジャンプ・下降ボタンで上下移動。「全画面」でゲームだけを表示できます。</p></div>
+          <div><h2>歩く・飛ぶ</h2><p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> で移動。<kbd>W</kbd> を300ms以内に二度押し、または <kbd>F</kbd>＋<kbd>W</kbd> を押している間は1.5倍速でダッシュ（飛行中も対応）。二度押しダッシュは <kbd>W</kbd> を離すと解除。マウスで見回し、<kbd>Space</kbd> でジャンプ。素早く2回押すと飛行ON/OFF。飛行中は長押しで上昇、<kbd>Shift</kbd> で下降、離すと浮遊します。タッチ端末は左のパッドで移動、画面右のドラッグで見回し、ジャンプ・下降ボタンで上下移動。「全画面」でゲームだけを表示し、タッチ時は「画面メニュー」の「全画面解除」で戻せます。</p></div>
         </article>
         <article class="help-item">
           <span class="help-icon pickaxe" aria-hidden="true">⛏</span>

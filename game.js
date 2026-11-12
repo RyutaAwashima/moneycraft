@@ -22,6 +22,10 @@
   const flightStatus = document.querySelector("#flight-status");
   const gameCard = document.querySelector(".game-card");
   const fullscreenButton = document.querySelector("#fullscreen-game");
+  const fullscreenMenu = document.querySelector("#fullscreen-menu");
+  const fullscreenExit = document.querySelector("#fullscreen-exit");
+  const fullscreenRestore = document.querySelector("#fullscreen-restore");
+  const fullscreenStatus = document.querySelector("#fullscreen-status");
   const soundToggle = document.querySelector("#sound-toggle");
   const soundVolume = document.querySelector("#sound-volume");
   const soundStatus = document.querySelector("#sound-status");
@@ -272,6 +276,8 @@
   let lastForwardTime = -Infinity;
   let doubleTapSprint = false;
   let expanded = false;
+  let nativeGameFullscreen = false;
+  let fullscreenExitPending = false;
   const frameTimeSamples = new Float64Array(FRAME_SAMPLE_CAPACITY);
   let frameTimeSampleCount = 0;
   let nextFrameTimeSample = 0;
@@ -2224,7 +2230,9 @@
     player.grounded = false;
   }
   function enableTouchControls() {
+    const alreadyEnabled = gameCard.classList.contains("touch-enabled");
     gameCard.classList.add("touch-enabled");
+    if (expanded && !alreadyEnabled) updateFullscreenControls();
     if (message.textContent === "ゲーム画面をクリックしてスタート") {
       message.textContent = "左のパッドで移動、画面右をドラッグして見回します";
     }
@@ -2303,6 +2311,7 @@
     prepareAudioForInteraction();
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     if (event.target.isContentEditable || event.target.tagName === "SELECT") return;
+    const buttonLike = event.target.tagName === "BUTTON" || event.target.tagName === "SUMMARY";
     if (event.code === "KeyV") {
       event.preventDefault();
       if (!event.repeat) cycleCamera();
@@ -2325,7 +2334,7 @@
       return;
     }
     if (pickerOpen) {
-      if (["Enter", "Space"].includes(event.code) && event.target.tagName === "BUTTON") return;
+      if (["Enter", "Space"].includes(event.code) && buttonLike) return;
       if (["ArrowUp", "ArrowDown", "Space", "Enter", "Escape"].includes(event.code)) event.preventDefault();
       if (event.code === "ArrowUp") cycleBlockCandidate(-1);
       if (event.code === "ArrowDown") cycleBlockCandidate(1);
@@ -2333,7 +2342,7 @@
       if (event.code === "Escape") closeBlockPicker(false);
       return;
     }
-    if (event.target.tagName === "BUTTON" && ["Enter", "Space"].includes(event.code)) return;
+    if (buttonLike && ["Enter", "Space"].includes(event.code)) return;
     if (event.code === "KeyQ") {
       event.preventDefault();
       if (!event.repeat) pickBlock();
@@ -2377,8 +2386,25 @@
     }
   });
 
+  function nativeFullscreenAvailable() {
+    return typeof gameCard.requestFullscreen === "function" && document.fullscreenEnabled !== false;
+  }
+  function setFullscreenStatus(text) {
+    fullscreenStatus.textContent = text;
+    fullscreenStatus.hidden = !text;
+  }
+  function setFullscreenBusy(busy) {
+    fullscreenButton.disabled = busy;
+    fullscreenExit.disabled = busy;
+    fullscreenRestore.disabled = busy;
+  }
   function updateFullscreenControls() {
-    fullscreenButton.textContent = expanded ? "全画面を終了" : "全画面";
+    const touchMenu = expanded && gameCard.classList.contains("touch-enabled");
+    fullscreenButton.textContent = expanded ? "全画面解除" : "全画面";
+    fullscreenButton.hidden = touchMenu;
+    fullscreenMenu.hidden = !touchMenu;
+    if (!touchMenu) fullscreenMenu.open = false;
+    fullscreenRestore.hidden = !expanded || document.fullscreenElement === gameCard || !nativeFullscreenAvailable();
     fullscreenButton.setAttribute("aria-pressed", String(expanded));
     gameCard.classList.toggle("is-expanded", expanded);
     document.body.classList.toggle("game-expanded", expanded);
@@ -2386,29 +2412,95 @@
   }
   async function toggleFullscreen() {
     if (fullscreenButton.disabled) return;
-    fullscreenButton.disabled = true;
+    const exiting = expanded;
+    const returnFocus = exiting && document.activeElement && fullscreenMenu.contains(document.activeElement);
+    setFullscreenBusy(true);
     try {
-      if (expanded) {
+      if (exiting) {
+        fullscreenExitPending = true;
         if (document.fullscreenElement === gameCard) await document.exitFullscreen();
         expanded = false;
+        nativeGameFullscreen = false;
+        setFullscreenStatus("");
       } else {
         expanded = true;
+        setFullscreenStatus("");
         updateFullscreenControls();
-        if (typeof gameCard.requestFullscreen === "function" && document.fullscreenEnabled !== false) {
+        if (nativeFullscreenAvailable()) {
           await gameCard.requestFullscreen();
+          nativeGameFullscreen = document.fullscreenElement === gameCard;
+          if (!nativeGameFullscreen && expanded) {
+            setFullscreenStatus("ブラウザーの全画面が解除されました。画面内で拡大表示を続けています。");
+          }
+        } else {
+          setFullscreenStatus("ブラウザーの全画面に対応していないため、画面内で拡大表示しています。");
         }
       }
     } catch (error) {
       console.error("Could not change fullscreen mode.", error);
-      expanded = document.fullscreenElement === gameCard;
+      if (!exiting && gameCard.classList.contains("touch-enabled") && !document.fullscreenElement) {
+        expanded = true;
+        nativeGameFullscreen = false;
+        setFullscreenStatus("ブラウザーの全画面を開始できませんでした。画面内で拡大表示しています。");
+      } else {
+        expanded = document.fullscreenElement === gameCard;
+        nativeGameFullscreen = expanded;
+        setFullscreenStatus(expanded ? "全画面を解除できませんでした。もう一度お試しください。" : "");
+      }
       message.textContent = "全画面を切り替えられませんでした。もう一度お試しください";
+    } finally {
+      fullscreenExitPending = false;
+      setFullscreenBusy(false);
+      updateFullscreenControls();
+      if (returnFocus && !expanded) fullscreenButton.focus();
     }
-    updateFullscreenControls();
-    fullscreenButton.disabled = false;
   }
+  async function restoreNativeFullscreen() {
+    if (fullscreenButton.disabled || !expanded || !nativeFullscreenAvailable()) return;
+    if (document.fullscreenElement) {
+      setFullscreenStatus("別の画面の全画面表示を終了してから、もう一度お試しください。");
+      return;
+    }
+    setFullscreenBusy(true);
+    try {
+      await gameCard.requestFullscreen();
+      nativeGameFullscreen = document.fullscreenElement === gameCard;
+      if (nativeGameFullscreen) {
+        fullscreenMenu.open = false;
+        setFullscreenStatus("");
+      } else {
+        setFullscreenStatus("ブラウザーの全画面に戻れませんでした。画面内の拡大表示を続けます。");
+      }
+    } catch (error) {
+      console.error("Could not restore native fullscreen mode.", error);
+      setFullscreenStatus("ブラウザーの全画面に戻せませんでした。画面内の拡大表示を続けます。");
+    } finally {
+      setFullscreenBusy(false);
+      updateFullscreenControls();
+    }
+  }
+  fullscreenButton.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "touch") enableTouchControls();
+  });
   fullscreenButton.addEventListener("click", toggleFullscreen);
+  fullscreenExit.addEventListener("click", toggleFullscreen);
+  fullscreenRestore.addEventListener("click", restoreNativeFullscreen);
+  document.addEventListener("pointerdown", (event) => {
+    if (fullscreenMenu.open && !fullscreenMenu.contains(event.target)) fullscreenMenu.open = false;
+  });
   document.addEventListener("fullscreenchange", () => {
-    expanded = document.fullscreenElement === gameCard;
+    const wasNativeFullscreen = nativeGameFullscreen;
+    nativeGameFullscreen = document.fullscreenElement === gameCard;
+    if (nativeGameFullscreen) {
+      expanded = true;
+      setFullscreenStatus("");
+    } else if (wasNativeFullscreen && expanded && !fullscreenExitPending
+      && gameCard.classList.contains("touch-enabled") && !document.fullscreenElement) {
+      setFullscreenStatus("ブラウザーの全画面が解除されました。画面内で拡大表示を続けています。");
+    } else if (wasNativeFullscreen || fullscreenExitPending || document.fullscreenElement) {
+      expanded = false;
+      setFullscreenStatus("");
+    }
     updateFullscreenControls();
   });
   soundToggle.addEventListener("click", toggleSound);

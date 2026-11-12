@@ -560,6 +560,72 @@ h1 {
   gap: 4px;
 }
 
+.fullscreen-controls {
+  flex-shrink: 0;
+}
+
+.fullscreen-menu {
+  position: relative;
+  z-index: 4;
+}
+
+.fullscreen-menu > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  color: #52645a;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.fullscreen-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fullscreen-menu > summary:focus-visible {
+  outline: 3px solid #b7d4b8;
+  outline-offset: 2px;
+}
+
+.fullscreen-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid #dfe6dc;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(44, 68, 52, 0.18);
+}
+
+.fullscreen-menu-panel .reset-button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  color: #40564a;
+  font-size: 12px;
+  text-align: left;
+}
+
+.fullscreen-menu-panel .reset-button[hidden] {
+  display: none;
+}
+
+.fullscreen-status {
+  display: block;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  background: #edf4e9;
+  color: #40564a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.fullscreen-status[hidden] {
+  display: none;
+}
+
 .sound-controls {
   display: flex;
   align-items: center;
@@ -1278,6 +1344,11 @@ kbd {
   .game-actions,
   .sound-controls {
     gap: 0;
+  }
+
+  .touch-enabled.is-expanded .game-toolbar,
+  .touch-enabled.is-expanded .game-actions {
+    flex-wrap: wrap;
   }
 
   #sound-volume {
