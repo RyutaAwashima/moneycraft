@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#b9d9e8" />
+    <title>Moneycraft | Sandbox Prototype</title>
+  </head>
+  <body>
+    <main id="game">
+      <canvas id="world" aria-label="ボクセルワールド"></canvas>
+      <section class="hud" aria-label="ゲーム情報">
+        <div class="world-label"><span class="world-mark"></span><span>FIELD NOTES <b>01</b></span></div>
+        <div class="coordinates" id="coordinates">X 000 · Y 000 · Z 000</div>
+        <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
+        <div class="toast" id="toast" role="status"></div>
+        <div class="hotbar" id="hotbar" aria-label="ブロック選択"></div>
+        <div class="hud-footer"><span>CREATIVE FIELD</span><span id="save-state">LOCAL WORLD · SAVED</span></div>
+      </section>
+      <section class="welcome" id="welcome" aria-labelledby="game-title">
+        <div class="welcome-card">
+          <p class="eyebrow">A SMALL BLOCK WORLD</p>
+          <h1 id="game-title">Make a little<br /><em>room to roam.</em></h1>
+          <p class="intro">A quiet place to build, break, and begin again.</p>
+          <button class="start-button" id="start-button" type="button"><span>Enter the world</span><span aria-hidden="true">↗</span></button>
+          <div class="controls-note"><span>WASD <b>MOVE</b></span><span>CLICK <b>BUILD</b></span><span>ESC <b>PAUSE</b></span></div>
+        </div>
+        <div class="welcome-caption">NO QUEST. NO TIMER.<br />JUST WHAT YOU MAKE.</div>
+      </section>
+      <div class="pause-indicator" id="pause-indicator" hidden>CLICK TO RESUME</div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

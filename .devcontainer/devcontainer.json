@@ -1,0 +1,10 @@
+{
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": {
+      "label": "Moneycraft local game",
+      "onAutoForward": "openBrowser",
+      "visibility": "private"
+    }
+  }
+}

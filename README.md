@@ -34,6 +34,17 @@ The main page groups the mob workshop, boss test arena, pose run, and camera
 tests under **試作・開発ツール**. These experimental pages are publicly
 accessible when the site is published; their behavior may change.
 
+## Run in GitHub Codespaces
+
+Run `npm install` and `npm run dev`, then open forwarded port **5173** in the
+Ports panel. The port is configured as private. The main game opens at `/`;
+the standalone Three.js sandbox prototype is at [`/sandbox.html`](./sandbox.html).
+
+The sandbox uses `W A S D` to move, `Space` to jump, the mouse to look around,
+left click to break blocks, and right click to place them. Use `1` to `5` to
+select a block and `Esc` to release the mouse. World edits are saved in this
+browser's local storage.
+
 ## Motion sensing and pose run
 
 Run `node dev-server.js` and open `http://127.0.0.1:49179/motion-run.html` to try
