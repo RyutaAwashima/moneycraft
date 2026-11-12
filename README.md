@@ -626,6 +626,9 @@ secrets, and no mail is sent by the test suite.
 
 Run the focused tests with
 `node --test world-model.test.js game.test.js avatar.test.js multiplayer.test.js src/protocol.test.js src/room.test.js src/worker.test.js src/recovery-mailer.test.js`.
+To include the prototype tests, run `node --test ./*.test.js ./src/*.test.js`.
+Specify the test files explicitly: automatic discovery also picks up the
+browser-only `motion-test.js` script.
 
 Run `wrangler dev --ip 127.0.0.1 --port 49180` and `node dev-server.js` in separate terminals
 to test the room service and game locally. The page is available at
